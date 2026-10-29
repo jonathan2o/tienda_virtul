@@ -12,6 +12,7 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 
 from pathlib import Path
 import os
+from decouple import config as env_config
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -84,7 +85,12 @@ TEMPLATES = [
 WSGI_APPLICATION = 'config.wsgi.application'
 
 
-USE_SQLITE = os.getenv('USE_SQLITE', 'False').lower() in ('true', '1')
+USE_SQLITE = str(env_config('USE_SQLITE', default=os.getenv('USE_SQLITE', 'False'))).lower() in ('true', '1')
+
+# Configuración de Google Gemini AI para el Chatbot
+GEMINI_API_KEY = env_config('GEMINI_API_KEY', default=os.getenv('GEMINI_API_KEY', ''))
+GEMINI_PROJECT_ID = env_config('GEMINI_PROJECT_ID', default=os.getenv('GEMINI_PROJECT_ID', ''))
+GEMINI_MODEL = env_config('GEMINI_MODEL', default=os.getenv('GEMINI_MODEL', 'gemini-3.1-flash-lite'))
 
 if USE_SQLITE:
     DATABASES = {

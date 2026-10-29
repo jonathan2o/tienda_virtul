@@ -17,6 +17,7 @@ export interface SimuladorResponse {
   mostrar_catalogo?: boolean;
   modo: 'autonomo' | 'revision';
   estado_conversacion: string;
+  gemini_activo?: boolean;
 }
 
 export const chatbotService = {
@@ -31,4 +32,6 @@ export const chatbotService = {
     api.post(`/chatbot/conversaciones/${id}/responder/`, { texto }).then((r) => r.data),
   simular: (chat_id: string, nombre_cliente: string, mensaje: string) =>
     api.post<SimuladorResponse>('/chatbot/simulador/', { chat_id, nombre_cliente, mensaje }).then((r) => r.data),
+  consultarGemini: (chat_id: string, nombre_cliente: string, mensaje: string) =>
+    api.post<SimuladorResponse>('/chatbot/gemini/', { chat_id, nombre_cliente, mensaje }).then((r) => r.data),
 };

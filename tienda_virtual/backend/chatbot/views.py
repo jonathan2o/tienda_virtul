@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.utils import timezone
 
 from rest_framework import status
@@ -16,6 +17,7 @@ from .serializers import (
     ResponderInputSerializer,
 )
 from .engine import BotEngine
+from .gemini_service import generar_respuesta_gemini
 
 
 # ---------- Config ----------
@@ -142,4 +144,50 @@ def simulador(request):
         'mostrar_catalogo': mostrar_catalogo,
         'modo': cfg.modo,
         'estado_conversacion': conv.estado,
+        'gemini_activo': bool(getattr(settings, 'GEMINI_API_KEY', '')),
+    })
+
+
+# ---------- Servicio Directo Gemini ----------
+@api_view(['POST'])
+@permission_classes([IsAuthenticated, IsAdminRole])
+def consultar_gemini(request):
+    serializer = SimuladorInputSerializer(data=request.data)
+    if not serializer.is_valid():
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    data = serializer.validated_data
+    chat_id = data.get('chat_id', 'simulador')
+    nombre = data.get('nombre_cliente', 'Cliente de prueba')
+    texto = data['mensaje']
+
+    conv, _ = Conversacion.objects.get_or_create(
+        chat_id=chat_id,
+        defaults={'nombre_cliente': nombre, 'telefono_cliente': chat_id, 'estado': Conversacion.ESTADO_BOT},
+    )
+    Mensaje.objects.create(conversacion=conv, autor=Mensaje.AUTOR_CLIENTE, texto=texto)
+
+    cfg = ConfigBot.obtener()
+    respuesta_ia, mostrar_catalogo = generar_respuesta_gemini(
+        mensaje_usuario=texto,
+        conversacion=conv,
+        cfg=cfg,
+    )
+    if not respuesta_ia:
+        engine = BotEngine(conv)
+        respuesta_ia = engine.responder(texto)
+        mostrar_catalogo = engine.mostro_catalogo
+
+    Mensaje.objects.create(conversacion=conv, autor=Mensaje.AUTOR_BOT, texto=respuesta_ia)
+    conv.ultima_actividad = timezone.now()
+    conv.save(update_fields=['ultima_actividad'])
+
+    return Response({
+        'conversacion_id': conv.id,
+        'chat_id': conv.chat_id,
+        'respuesta': respuesta_ia,
+        'mostrar_catalogo': mostrar_catalogo,
+        'modo': cfg.modo,
+        'estado_conversacion': conv.estado,
+        'gemini_activo': True,
     })

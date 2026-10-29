@@ -12,7 +12,12 @@ interface MensajeSim {
   mostrarCatalogo?: boolean;
 }
 
-const SUGERENCIAS_RAPIDAS = ['Quiero más información', 'Catálogo', 'Cancelar'];
+const SUGERENCIAS_RAPIDAS = [
+  'Quiero más información',
+  '¿Qué productos tienes disponibles y a qué precio?',
+  'Catálogo',
+  'Cancelar',
+];
 
 const formatearUrlImagen = (url: string | null | undefined): string | null => {
   if (!url) return null;
@@ -166,11 +171,14 @@ export const ChatbotManager = () => {
       {/* CABECERA COMPACTA CON CONTROLES */}
       <div className="bg-slate-900 p-4 rounded-2xl border border-slate-800 shadow-xl flex flex-col md:flex-row md:items-center md:justify-between gap-3">
         <div>
-          <h2 className="text-lg sm:text-xl font-bold text-slate-100 flex items-center gap-2">
+          <h2 className="text-lg sm:text-xl font-bold text-slate-100 flex flex-wrap items-center gap-2">
             <Bot className="text-indigo-400" size={24} /> Chatbot — Chat de prueba
+            <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+              <Sparkles size={12} /> Gemini AI Conectado
+            </span>
           </h2>
           <p className="text-xs sm:text-sm text-slate-400">
-            Chatea aquí con el robot para consultar stock real y probar el flujo paso a paso
+            Chatea aquí con el robot impulsado por Google Gemini para consultar stock real y probar el flujo paso a paso
           </p>
         </div>
 

@@ -8,6 +8,7 @@ from .views import (
     tomar_chat,
     responder_manual,
     simulador,
+    consultar_gemini,
 )
 
 urlpatterns = [
@@ -18,4 +19,5 @@ urlpatterns = [
     path('chatbot/conversaciones/<int:pk>/tomar-chat/', tomar_chat, name='chatbot-tomar-chat'),
     path('chatbot/conversaciones/<int:pk>/responder/', responder_manual, name='chatbot-responder'),
     path('chatbot/simulador/', simulador, name='chatbot-simulador'),
+    path('chatbot/gemini/', consultar_gemini, name='chatbot-gemini'),
 ]

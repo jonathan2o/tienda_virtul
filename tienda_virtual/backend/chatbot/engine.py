@@ -8,6 +8,7 @@ from stock.models import Stock
 from stock.services import StockService
 
 from .models import ConfigBot, Conversacion
+from .gemini_service import generar_respuesta_gemini
 
 
 FRASES_PASO_1 = (
@@ -106,6 +107,17 @@ class BotEngine:
                 return True
         return False
 
+    def _es_consulta_conversacional(self, low: str) -> bool:
+        if '?' in low or '¿' in low:
+            return True
+        palabras_consulta = (
+            'cuanto', 'cuánto', 'precio', 'vale', 'cuesta', 'tienes', 'tienen',
+            'hay', 'disponible', 'recomienda', 'busco', 'quisiera saber',
+            'hacen envio', 'hacen envío', 'envios', 'envíos', 'ubicacion',
+            'ubicación', 'horario', 'tallas', 'colores', 'que vendes', 'qué vendes',
+        )
+        return any(p in low for p in palabras_consulta)
+
     # ---------- main ----------
     def responder(self, texto):
         texto = (texto or '').strip()
@@ -123,13 +135,14 @@ class BotEngine:
         ctx = self._ctx()
         phase = ctx.get('phase')
 
-        # Paso 1: Si el cliente pide información / saluda / pide catálogo, o si es el primer mensaje de un nuevo chat sin producto directo
+        # Paso 1: Si el cliente pide información / saluda / pide catálogo
         if phase is None and self._es_solicitud_inicial(low):
             return self._mensaje_paso_1_catalogo()
 
-        # --- sin flujo activo: intentar identificar producto ---
+        # --- sin flujo activo: intentar identificar producto directo o responder con Gemini ---
         if phase is None:
-            matches = self._buscar_stocks(texto)
+            es_conversacional = self._es_consulta_conversacional(low)
+            matches = [] if es_conversacional else self._buscar_stocks(texto)
             if len(matches) == 1:
                 s = matches[0]
                 ctx = {'iniciado': True, 'phase': 'cantidad', 'stock_id': s.id}
@@ -145,6 +158,20 @@ class BotEngine:
                     lines.append(f"{i}. {self._fmt_stock(s)}")
                 lines.append("\nResponde con el número de la opción.")
                 return "\n".join(lines)
+
+            # Consultar al cerebro de IA (Google Gemini) con el inventario real
+            respuesta_ia, mostrar_cat = generar_respuesta_gemini(
+                mensaje_usuario=texto,
+                conversacion=self.conv,
+                cfg=self.cfg,
+            )
+            if respuesta_ia:
+                if mostrar_cat or not ctx.get('iniciado'):
+                    self.mostro_catalogo = mostrar_cat or not ctx.get('iniciado')
+                ctx['iniciado'] = True
+                self._save_ctx(ctx)
+                return respuesta_ia
+
             if not ctx.get('iniciado'):
                 return self._mensaje_paso_1_catalogo()
             return ("No encontré ese estilo. Mire el catálogo de arriba o escríbanos el nombre del producto que le gustó.")
