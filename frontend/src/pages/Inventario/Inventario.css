@@ -1,0 +1,65 @@
+.inventario {
+    padding: 30px;
+}
+
+.busqueda-ubicacion {
+    display: flex;
+    align-items: end;
+    gap: 15px;
+    margin-bottom: 30px;
+}
+
+.busqueda-ubicacion div {
+    display: flex;
+    flex-direction: column;
+    gap: 5px;
+}
+
+.busqueda-ubicacion input {
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+}
+
+.busqueda-ubicacion button {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.productos-inventario {
+    display: grid;
+    gap: 20px;
+}
+
+.producto-inventario {
+    display: flex;
+    gap: 20px;
+    padding: 20px;
+    border: 1px solid #ddd;
+    border-radius: 10px;
+}
+
+.producto-inventario img {
+    width: 140px;
+    height: 140px;
+    object-fit: cover;
+    border-radius: 8px;
+}
+
+.tallas {
+    display: flex;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+.tallas span {
+    padding: 8px 12px;
+    border-radius: 6px;
+    background: #eee;
+}
+
+.error {
+    color: red;
+}

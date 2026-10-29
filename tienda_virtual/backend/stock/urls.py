@@ -1,71 +1,78 @@
-from django.urls import path
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
 
 from .views import (
-    categoria_lista,
+    CategoriaViewSet,
     producto_lista,
     producto_detalle,
-    talla_lista,
     stock_lista,
     stock_detalle,
-    productos_por_ubicacion,
-    equivalencia_lista,
-    equivalencia_detalle
+    venta_lista,
+    venta_detalle,
+    dashboard_metricas,
+    meses_disponibles,
+    reiniciar_mes,
 )
 
+router = DefaultRouter()
+router.register(r'categorias', CategoriaViewSet, basename='categoria')
 
 urlpatterns = [
+    path('', include(router.urls)),
     
-    path(
-        'categorias/',
-        categoria_lista,
-        name='categoria-lista'
-    ),
-
+    # Productos
     path(
         'productos/',
         producto_lista,
         name='producto-lista'
     ),
-
     path(
-        'productos/<int:id>/',
+        'productos/<int:pk>/',
         producto_detalle,
         name='producto-detalle'
     ),
-    path(
-        'tallas/',
-        talla_lista,
-        name='talla-lista'
-    ),
-    
-    path(
-        'stock/ubicacion/<str:posicion>/<int:fila>/',
-        productos_por_ubicacion,
-        name='stock-ubicacion'
-    ),
 
+
+    # Stock
     path(
         'stock/',
         stock_lista,
         name='stock-lista'
     ),
-
     path(
-        'stock/<int:id>/',
+        'stock/<int:pk>/',
         stock_detalle,
         name='stock-detalle'
     ),
-    
     path(
-        'equivalencias/',
-        equivalencia_lista,
-        name='equivalencia-lista'
+        'stock/dashboard-metrics/',
+        dashboard_metricas,
+        name='dashboard-metricas'
+    ),
+    path(
+        'stock/meses-disponibles/',
+        meses_disponibles,
+        name='meses-disponibles'
+    ),
+    path(
+        'stock/reiniciar-mes/',
+        reiniciar_mes,
+        name='reiniciar-mes'
+    ),
+    
+
+
+    # Ventas
+    path(
+        'ventas/',
+        venta_lista,
+        name='venta-lista'
+    ),
+    path(
+        'ventas/<int:pk>/',
+        venta_detalle,
+        name='venta-detalle'
     ),
 
-    path(
-        'equivalencias/<int:id>/',
-        equivalencia_detalle,
-        name='equivalencia-detalle'
-    ),
-    
+    # Panel general, alertas, historial y exportación
 ]

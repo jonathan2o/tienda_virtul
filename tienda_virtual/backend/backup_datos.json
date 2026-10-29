@@ -1,0 +1,20 @@
+[
+{
+  "model": "stock.producto",
+  "pk": 21,
+  "fields": {
+    "nombre": "sdasdsd",
+    "categoria": null,
+    "descripcion": "sdassdsadsadsdsad",
+    "talla": "m",
+    "imagen": "productos/camisa_doble_estampado_luna_2_pt7tulB.png",
+    "imagen_guia_tallas": "guias_tallas/camisa_doble_estampado_flor2.png",
+    "precio_recibido": "25000.00",
+    "precio_comercial": "43750.00",
+    "precio": "25000.00",
+    "posicion": "A",
+    "fila": 1,
+    "activo": true
+  }
+}
+]

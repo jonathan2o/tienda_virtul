@@ -1,0 +1,17 @@
+services:
+  db:
+    image: postgres:16-alpine
+    container_name: tienda_virtual_postgres
+    restart: always
+    environment:
+      POSTGRES_DB: tienda_virtual_db
+      POSTGRES_USER: jonathan_rodriguez
+      POSTGRES_PASSWORD: "3132959177"
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+volumes:
+  postgres_data:
+
