@@ -87,9 +87,18 @@ class StockService:
 
     @classmethod
     @transaction.atomic
-    def procesar_venta(cls, stock_id: int, cantidad_a_vender: int, usuario=None, datos_cliente: Optional[Dict[str, Any]] = None) -> Venta:
+    def procesar_venta(
+        cls,
+        stock_id: int,
+        cantidad_a_vender: int,
+        usuario=None,
+        datos_cliente: Optional[Dict[str, Any]] = None,
+        total_venta_override: Optional[Decimal] = None,
+    ) -> Venta:
         """
         Procesa una venta con bloqueo select_for_update, descuento atómico y congelamiento de precios históricos.
+        `total_venta_override` permite registrar un total negociado (ej. parrilla de paquetes del chatbot)
+        sin afectar las ventas normales del POS, que no envían este parámetro.
         """
         if cantidad_a_vender <= 0:
             raise ValidationError("Stock insuficiente para realizar la venta.")
@@ -120,6 +129,11 @@ class StockService:
             Decimal('0.00')
         )
         total_venta = (Decimal(str(cantidad_a_vender)) * Decimal(str(precio_comercial_historico))).quantize(Decimal('0.01'))
+        if total_venta_override is not None:
+            total_venta = Decimal(str(total_venta_override)).quantize(Decimal('0.01'))
+            precio_comercial_historico = (
+                total_venta / Decimal(str(cantidad_a_vender))
+            ).quantize(Decimal('0.01'))
 
         # Crear el registro en Venta
         datos_cliente = datos_cliente or {}

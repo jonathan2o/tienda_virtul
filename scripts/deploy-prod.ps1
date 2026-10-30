@@ -28,6 +28,7 @@ scp "$RepoRoot\tienda_virtual\backend\config\settings.py" "${Server}:${BackendRe
 scp "$RepoRoot\tienda_virtual\backend\config\urls.py" "${Server}:${BackendRemotePath}/config/urls.py"
 scp "$RepoRoot\tienda_virtual\backend\chatbot\*.py" "${Server}:${BackendRemotePath}/chatbot/"
 scp "$RepoRoot\tienda_virtual\backend\chatbot\migrations\*.py" "${Server}:${BackendRemotePath}/chatbot/migrations/"
+scp "$RepoRoot\tienda_virtual\backend\stock\services.py" "${Server}:${BackendRemotePath}/stock/services.py"
 
 Write-Host "=== 4. Instalando paquetes, aplicando migraciones y reiniciando tienda-backend.service ===" -ForegroundColor Cyan
 $RemoteCmd = "cd $BackendRemotePath && ./venv/bin/python -m pip install -q google-genai python-decouple && ./venv/bin/python manage.py migrate --noinput && systemctl restart tienda-backend.service && systemctl is-active tienda-backend.service"

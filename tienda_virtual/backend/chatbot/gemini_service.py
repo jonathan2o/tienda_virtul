@@ -5,18 +5,69 @@ from typing import Tuple
 import httpx
 from django.conf import settings
 from django.db.models import Q
-from django.utils import timezone
 from google import genai
 from google.genai import types
 
-from stock.models import Stock
-from .models import ConfigBot, Conversacion
+from stock.models import Categoria, Stock
+from .models import ConfigBot, Conversacion, PARRILA_PRECIOS_DEFAULT
 
 logger = logging.getLogger(__name__)
 
 _HTTP_CLIENT: httpx.Client | None = None
 
 ORDEN_TALLAS = {'S': 1, 'M': 2, 'L': 3, 'XL': 4, 'XXL': 5, '2XL': 5, 'XXXL': 6, '3XL': 6}
+
+CONDICIONES_VENTA = (
+    "Tienda ubicada en Bogotá. Ventas 100% en línea, sin almacén físico. "
+    "Envíos a toda Colombia con pago contra entrega. "
+    "La guía de envío se comparte cuando el pedido es despachado."
+)
+
+
+def fmt_cop(valor) -> str:
+    """Formatea un valor como pesos colombianos: $73.000"""
+    try:
+        return f"${int(round(float(valor))):,}".replace(',', '.')
+    except (TypeError, ValueError):
+        return "$0"
+
+
+def categoria_key(nombre_categoria: str | None) -> str | None:
+    """Mapea el nombre real de la categoría a la llave de la parrilla de precios."""
+    low = (nombre_categoria or '').lower()
+    if 'oversize' in low:
+        return 'oversize_hombre'
+    if 'mujer' in low or 'femenin' in low or 'dama' in low:
+        return 'camisas_mujer'
+    return None
+
+
+def obtener_parrilla(cfg: ConfigBot | None = None) -> dict:
+    if cfg is not None and cfg.precios_paquetes:
+        return cfg.precios_paquetes
+    return PARRILA_PRECIOS_DEFAULT
+
+
+def formatear_parrilla(categoria_nombre: str | None, cfg: ConfigBot | None = None) -> str | None:
+    """Devuelve la parrilla oficial de venta de la categoría, o None si no aplica."""
+    key = categoria_key(categoria_nombre)
+    if not key:
+        return None
+    grid = obtener_parrilla(cfg).get(key)
+    if not grid:
+        return None
+    paquetes = grid.get('paquetes') or {}
+    partes = []
+    for cantidad_str, precio in sorted(paquetes.items(), key=lambda kv: int(kv[0])):
+        cantidad = int(cantidad_str)
+        unidad = 'camiseta' if cantidad == 1 else 'camisetas'
+        partes.append(f"{cantidad} {unidad}: {fmt_cop(precio)}")
+    if not partes:
+        return None
+    texto = ' · '.join(partes)
+    if grid.get('envio_incluido', True):
+        texto += ' (envío incluido)'
+    return texto
 
 
 def _get_http_client() -> httpx.Client:
@@ -32,7 +83,7 @@ def _get_http_client() -> httpx.Client:
 def extraer_nombre_base_y_talla(nombre: str, talla_actual: str | None = None) -> Tuple[str, str]:
     """
     Separa la talla final del nombre del producto (ej: 'Angel XL' -> ('Angel', 'XL'))
-    y normaliza espacios para poder agrupar 'una de cada una' por diseño.
+    y normaliza espacios para poder agrupar 1 referencia por diseño.
     """
     limpio = re.sub(r'\s+', ' ', (nombre or '').strip())
     talla = (talla_actual or '').strip().upper()
@@ -45,16 +96,30 @@ def extraer_nombre_base_y_talla(nombre: str, talla_actual: str | None = None) ->
     return limpio, (talla or 'Única')
 
 
-def obtener_qs_oversize(incluir_imagen: bool = False):
+def _contiene_palabra(frase: str, texto: str) -> bool:
+    if not frase:
+        return False
+    patron = rf'(?<![a-z0-9áéíóúüñ]){re.escape(frase)}(?![a-z0-9áéíóúüñ])'
+    return bool(re.search(patron, texto, flags=re.IGNORECASE))
+
+
+def obtener_qs_oversize(incluir_imagen: bool = False, categoria_filtro: str | None = None):
     """
-    Devuelve el queryset de Stock filtrado únicamente al catálogo de Oversizes
-    (si existen productos oversize en la BD; si no, devuelve el stock general para tests).
+    Devuelve el queryset de Stock con existencias reales (> 0).
+    Si se indica categoria_filtro, filtra estrictamente por esa categoría.
+    Si no, prioriza Oversize (comportamiento histórico del chatbot).
     """
     qs = Stock.objects.select_related('producto', 'producto__categoria').filter(cantidad__gt=0)
     if not incluir_imagen:
         qs = qs.defer('producto__imagen', 'producto__imagen_guia_tallas')
     else:
         qs = qs.defer('producto__imagen_guia_tallas')
+
+    if categoria_filtro:
+        return qs.filter(
+            Q(producto__categoria__nombre__icontains=categoria_filtro)
+            | Q(producto__nombre__icontains=categoria_filtro)
+        ).order_by('producto__nombre', 'talla')
 
     qs_oversize = qs.filter(
         Q(producto__categoria__nombre__icontains='oversize')
@@ -68,7 +133,7 @@ def obtener_qs_oversize(incluir_imagen: bool = False):
 def agrupar_stocks_por_diseno(stocks):
     """
     Agrupa los registros de Stock por nombre de diseño base para mostrar
-    SOLO UNA referencia de cada diseño con todas sus tallas disponibles.
+    1 sola referencia por diseño con sus tallas reales disponibles.
     """
     grupos = {}
     for s in stocks:
@@ -83,9 +148,11 @@ def agrupar_stocks_por_diseno(stocks):
                 'stock_representativo': s,
                 'precio': precio,
                 'tallas': {},
+                'stocks_por_talla': {},
                 'cantidad_total': 0,
             }
         grupos[clave]['tallas'][talla] = grupos[clave]['tallas'].get(talla, 0) + (s.cantidad or 0)
+        grupos[clave]['stocks_por_talla'].setdefault(talla, s)
         grupos[clave]['cantidad_total'] += s.cantidad or 0
 
     resultado = []
@@ -103,76 +170,148 @@ def agrupar_stocks_por_diseno(stocks):
     return resultado
 
 
-def _saludo_actual() -> str:
-    hora = timezone.localtime().hour
-    if hora < 12:
-        return "buenos días"
-    if hora < 19:
-        return "buenas tardes"
-    return "buenas noches"
+def detectar_contexto_producto(texto: str, ctx_actual: dict) -> dict:
+    """
+    Detecta de qué categoría o diseño está hablando el cliente consultando PostgreSQL
+    y actualiza el contexto de la conversación para no perder el hilo.
+    """
+    low = re.sub(r'\s+', ' ', (texto or '').lower()).strip()
+    nuevo_ctx = dict(ctx_actual or {})
+
+    # 1. Categorías reales mencionadas explícitamente
+    for cat in Categoria.objects.all():
+        nombre_low = (cat.nombre or '').lower()
+        if nombre_low and nombre_low in low:
+            nuevo_ctx['categoria_actual'] = cat.nombre
+            break
+
+    if 'mujer' in low or 'femenin' in low or 'dama' in low:
+        nuevo_ctx['categoria_actual'] = 'Camisas Para Mujer'
+    elif 'oversize' in low or 'hombre' in low:
+        nuevo_ctx['categoria_actual'] = 'Camisas Oversize Hombre'
+
+    # 2. Diseño específico dentro de la categoría detectada
+    stocks = obtener_qs_oversize(incluir_imagen=False, categoria_filtro=nuevo_ctx.get('categoria_actual'))
+    for g in agrupar_stocks_por_diseno(stocks):
+        diseno_low = g['nombre_base'].lower()
+        if len(diseno_low) >= 3 and _contiene_palabra(diseno_low, low):
+            nuevo_ctx['diseno_actual'] = g['nombre_base']
+            nuevo_ctx['producto_actual'] = f"Camisa diseño {g['nombre_base']}"
+            break
+
+    # Si aún no hay categoría, usar Oversize solo si existe en la base
+    if not nuevo_ctx.get('categoria_actual'):
+        if Categoria.objects.filter(nombre__icontains='oversize').exists():
+            nuevo_ctx['categoria_actual'] = 'Camisas Oversize Hombre'
+    if not nuevo_ctx.get('producto_actual') and nuevo_ctx.get('categoria_actual'):
+        nuevo_ctx['producto_actual'] = nuevo_ctx['categoria_actual']
+
+    return nuevo_ctx
 
 
-def construir_resumen_inventario() -> str:
-    """Construye un listado agrupado (1 por diseño) del catálogo de Oversizes."""
-    stocks = obtener_qs_oversize(incluir_imagen=False)
+def consultar_datos_reales_contexto(ctx: dict, cfg: ConfigBot) -> str:
+    """
+    Consulta en PostgreSQL los precios, tallas y existencias reales del
+    producto/categoría del que se está hablando, más la parrilla oficial de venta.
+    """
+    categoria = ctx.get('categoria_actual')
+    diseno = ctx.get('diseno_actual')
+    producto_actual = ctx.get('producto_actual') or categoria or 'Camisa Oversize'
+
+    stocks = obtener_qs_oversize(incluir_imagen=False, categoria_filtro=categoria)
     grupos = agrupar_stocks_por_diseno(stocks)
+
+    lineas = [f"PRODUCTO/CATEGORÍA ACTUAL EN CONVERSACIÓN: {producto_actual}" + (f" ({categoria})" if categoria else "")]
+    parrilla = formatear_parrilla(categoria, cfg)
+    if parrilla:
+        lineas.append(f"- PARRILLA OFICIAL DE VENTA: {parrilla}")
+    lineas.append(f"- Condiciones de venta: {CONDICIONES_VENTA}")
+
+    promocion = (cfg.reglas_extra or '').strip()
+    if promocion:
+        lineas.append(f"- Regla/promoción adicional autorizada: {promocion}")
+
     if not grupos:
-        return "Actualmente no hay camisetas Oversize con unidades disponibles."
+        lineas.append("- Sin unidades disponibles en este momento.")
+        return '\n'.join(lineas)
 
-    lineas = []
+    if diseno:
+        for g in grupos:
+            if g['nombre_base'].lower() == diseno.lower():
+                lineas.append(f"- Diseño en conversación: {g['nombre_base']}")
+                lineas.append(f"- Tallas reales disponibles: {g['tallas_texto']}")
+                lineas.append(f"- Unidades disponibles: {g['cantidad_total']}")
+                if not parrilla:
+                    lineas.append(f"- Precio real unitario: {fmt_cop(g['precio'])} COP")
+                return '\n'.join(lineas)
+
+    todas_tallas = set()
     for g in grupos:
-        lineas.append(
-            f"- Diseño: {g['nombre_base']} | Tallas disponibles: {g['detalle_tallas']} | "
-            f"Precio: ${g['precio']:,.0f} COP"
+        todas_tallas.update(g['tallas_lista'])
+    tallas_str = ', '.join(sorted(todas_tallas, key=lambda t: (ORDEN_TALLAS.get(t.upper(), 99), t)))
+    lineas.append(f"- Tallas reales disponibles: {tallas_str}")
+    lineas.append(f"- Diseños disponibles con stock: {len(grupos)}")
+    if not parrilla:
+        precios = sorted({int(round(float(g['precio']))) for g in grupos})
+        lineas.append(f"- Precio real unitario: {fmt_cop(precios[0])} COP")
+    return '\n'.join(lineas)
+
+
+def construir_instrucciones_sistema(
+    cfg: ConfigBot,
+    ctx: dict,
+    ya_saludado: bool,
+    modo_auxiliar: bool = False,
+) -> str:
+    datos_reales = consultar_datos_reales_contexto(ctx, cfg)
+
+    if ya_saludado:
+        regla_saludo = (
+            "- Ya saludaste antes en esta conversación. PROHIBIDO volver a saludar "
+            "(nada de 'Hola', 'Buenas tardes', 'Bienvenido' ni similares). Ve directo a la respuesta."
         )
-    return "\n".join(lineas)
+    else:
+        regla_saludo = (
+            "- Primer mensaje de la conversación: saluda de forma breve y natural "
+            "(puedes usar «veci») y pregunta qué producto busca. Una sola pregunta."
+        )
 
+    regla_auxiliar = (
+        "\nMODO AUXILIAR: el cliente está a mitad de una compra y preguntó algo distinto. "
+        "Responde su duda en UNA sola frase corta y NO hagas preguntas; el sistema retomará el paso pendiente."
+        if modo_auxiliar else ""
+    )
 
-def construir_instrucciones_sistema(cfg: ConfigBot) -> str:
-    inventario_txt = construir_resumen_inventario()
-    saludo = _saludo_actual()
-    tono = (cfg.tono or "").strip()
-    reglas_extra = (cfg.reglas_extra or "").strip()
+    return f"""Eres el asesor de ventas humano de Techno Shop, tienda de ropa online en Bogotá. Atiendes por chat como en WhatsApp: cercano, natural, breve y servicial. Usa «veci» con moderación, no en cada frase.
 
-    instrucciones = f"""Eres el mejor asesor comercial y vendedor estrella de Techno Shop, especialista en nuestra línea exclusiva de **Camisetas Oversize**.
-En este momento son las horas de la {saludo} (saluda con entusiasmo diciendo "¡Hola, muy {saludo}!").
+ESTADO DEL SALUDO:
+{regla_saludo}
 
-ACTITUD Y ESTILO DE VENTA (MUY IMPORTANTE):
-- Eres carismático, cercano, persuasivo y muy vendedor. Tu objetivo es enamorar al cliente de nuestras Camisetas Oversize y guiarlo hasta cerrar su compra.
-- ÚNICAMENTE manejamos el **Catálogo de Camisetas Oversize** (no menciones ni ofrezcas otras categorías).
-- Cuando el cliente salude, escriba "Hola quiero más información", pregunte qué vendemos o pida el catálogo:
-  1. Dale una bienvenida cálida y con mucha actitud comercial.
-  2. Cuéntale que manejamos **exclusivamente Camisetas Oversize en tendencia**, con diseños únicos, tela fresca de excelente caída y horma oversize brutal, con precios entre **$50,000 y $53,000 COP** en tallas **M, L, XL y XXXL**.
-  3. Invítalo a mirar aquí abajo el catálogo (donde verá **1 foto por cada diseño único** con sus tallas disponibles).
-  4. Cierra tu mensaje con una pregunta vendedora directa, por ejemplo: *"¿Qué talla sueles usar (M, L, XL o XXXL) para recomendarte los mejores estilos disponibles ahora mismo?"*
-  5. Incluye SIEMPRE al final la etiqueta exacta `[MOSTRAR_CATALOGO]` cuando pidan información, saluden o quieran ver el catálogo/productos.
+DATOS REALES CONSULTADOS EN POSTGRESQL (ÚNICA FUENTE DE VERDAD):
+{datos_reales}
 
-CATÁLOGO REAL DE DISEÑOS OVERSIZE DISPONIBLES (AGRUPADO 1 POR DISEÑO):
-{inventario_txt}
-
-REGLAS DE CIERRE DE VENTA:
-1. Usa exclusivamente los diseños, tallas y precios del listado de arriba. No inventes diseños ni tallas agotadas.
-2. Si el cliente pregunta por una talla específica (ej. "qué tienes en XL"), recomiéndale con entusiasmo 4 o 5 diseños brutales que tengan esa talla disponible y dile su precio.
-3. Para comprar, indícale que puede tocar el botón **"Me interesa este"** en la tarjeta del diseño que le gustó o escribirnos el nombre del diseño y la talla que desea.
-4. Manejamos **Envío a domicilio** (nombre, dirección, barrio y ciudad) y **Recogida en tienda** (solo nombre).
-"""
-    if tono:
-        instrucciones += f"\nPERSONALIDAD CONFIGURADA:\n{tono}\n"
-    if reglas_extra:
-        instrucciones += f"\nREGLAS ADICIONALES:\n{reglas_extra}\n"
-
-    return instrucciones
+REGLAS DE RESPUESTA:
+1. Una sola pregunta por mensaje y espera la respuesta. Respuestas de 1 o 2 frases cortas; nunca párrafos largos.
+2. Responde solo lo que el cliente acaba de preguntar. No repitas información que ya diste ni vuelvas a saludar.
+3. Precio: usa la PARRILLA OFICIAL del producto en conversación (envío incluido). Si pregunta "¿y cuánto cuesta?" sin nombrar producto, se refiere al PRODUCTO ACTUAL EN CONVERSACIÓN.
+4. Tallas: usa únicamente las tallas reales disponibles del producto en conversación.
+5. Catálogo/fotos: si el cliente pide ver el catálogo o las fotos, responde únicamente con [MOSTRAR_CATALOGO] (el sistema envía las fotos).
+6. Condiciones: tienda en Bogotá, 100% online, envíos a toda Colombia, pago contra entrega, guía al despachar.
+7. Prohibido inventar precios, descuentos, tallas, disponibilidad o fechas de entrega. No ofrezcas descuentos.
+8. Guía la venta paso a paso (producto → talla → cantidad → datos de envío → confirmación) sin presionar al cliente.{regla_auxiliar}"""
 
 
 def generar_respuesta_gemini(
     mensaje_usuario: str,
     conversacion: Conversacion | None = None,
     cfg: ConfigBot | None = None,
-    forzar_catalogo: bool = False,
+    ctx: dict | None = None,
+    ya_saludado: bool = False,
+    modo_auxiliar: bool = False,
 ) -> Tuple[str | None, bool]:
     """
-    Envía el mensaje del cliente y el contexto de la conversación a Google Gemini
-    y devuelve (respuesta_texto, mostrar_catalogo).
+    Envía el mensaje del cliente, el historial y los datos reales de PostgreSQL a Gemini.
+    Devuelve (respuesta_texto, mostrar_catalogo).
     """
     api_key = getattr(settings, 'GEMINI_API_KEY', '') or ''
     if not api_key:
@@ -181,26 +320,33 @@ def generar_respuesta_gemini(
     if cfg is None:
         cfg = ConfigBot.obtener()
 
+    if ctx is None:
+        ctx = dict(conversacion.contexto or {}) if conversacion else {}
+
     modelo_preferido = getattr(settings, 'GEMINI_MODEL', 'gemini-3.1-flash-lite') or 'gemini-3.1-flash-lite'
     modelos_a_probar = [modelo_preferido]
     for fallback_model in ('gemini-3.1-flash-lite', 'gemini-3.8-flash'):
         if fallback_model not in modelos_a_probar:
             modelos_a_probar.append(fallback_model)
 
-    system_instruction = construir_instrucciones_sistema(cfg)
+    system_instruction = construir_instrucciones_sistema(
+        cfg, ctx=ctx, ya_saludado=ya_saludado, modo_auxiliar=modo_auxiliar
+    )
 
     contents: list[types.Content] = []
     if conversacion is not None:
         ultimos_mensajes = list(conversacion.mensajes.order_by('-fecha')[:10])
         ultimos_mensajes.reverse()
-        for m in ultimos_mensajes:
-            if m.texto == mensaje_usuario and m == ultimos_mensajes[-1]:
+        for idx, m in enumerate(ultimos_mensajes):
+            # Omitir el mensaje del cliente que se acaba de guardar en views.py para no duplicarlo al final
+            if idx == len(ultimos_mensajes) - 1 and m.autor == 'cliente' and m.texto == mensaje_usuario:
                 continue
             role = 'user' if m.autor == 'cliente' else 'model'
+            texto_hist = m.texto.strip() if m.texto and m.texto.strip() else "[Catálogo de fotografías enviado al cliente]"
             contents.append(
                 types.Content(
                     role=role,
-                    parts=[types.Part.from_text(text=m.texto)],
+                    parts=[types.Part.from_text(text=texto_hist)],
                 )
             )
 
@@ -217,8 +363,8 @@ def generar_respuesta_gemini(
     )
     config = types.GenerateContentConfig(
         system_instruction=system_instruction,
-        temperature=0.55,
-        max_output_tokens=700,
+        temperature=0.2,
+        max_output_tokens=160,
     )
 
     ultimo_error = None
@@ -233,10 +379,21 @@ def generar_respuesta_gemini(
             if not texto:
                 continue
 
-            mostrar_catalogo = forzar_catalogo
+            mostrar_catalogo = False
             if '[MOSTRAR_CATALOGO]' in texto:
                 mostrar_catalogo = True
                 texto = texto.replace('[MOSTRAR_CATALOGO]', '').strip()
+
+            # Seguridad adicional: si ya había saludado y el modelo incluyó un saludo al inicio, limpiarlo
+            if ya_saludado:
+                texto = re.sub(
+                    r'^(¡?hola[!,\\.\s]*|¡?muy\s+buenos\s+d[ií]as[!,\\.\s]*|¡?muy\s+buenas\s+tardes[!,\\.\s]*|¡?muy\s+buenas\s+noches[!,\\.\s]*|¡?buenos\s+d[ií]as[!,\\.\s]*|¡?buenas\s+tardes[!,\\.\s]*|¡?buenas\s+noches[!,\\.\s]*|¡?buenas[!,\\.\s]*)+',
+                    '',
+                    texto,
+                    flags=re.IGNORECASE,
+                ).strip()
+                if texto:
+                    texto = texto[0].upper() + texto[1:]
 
             return texto, mostrar_catalogo
         except Exception as exc:

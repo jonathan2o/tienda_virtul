@@ -53,11 +53,12 @@ def _obtener_miniatura_base64(prod_id: int, raw_img: str | None) -> str | None:
         return raw_img
 
 
-# ---------- Catálogo Ligero para el Chatbot (Solo Oversizes, 1 por Diseño) ----------
+# ---------- Catálogo Ligero para el Chatbot (1 por Diseño, filtrable por categoría) ----------
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def catalogo_bot(request):
-    stocks = obtener_qs_oversize(incluir_imagen=True)
+    categoria = (request.query_params.get('categoria') or '').strip() or None
+    stocks = obtener_qs_oversize(incluir_imagen=True, categoria_filtro=categoria)
     grupos = agrupar_stocks_por_diseno(stocks)
     items = []
     for g in grupos:
@@ -199,6 +200,7 @@ def simulador(request):
     cfg = ConfigBot.obtener()
     respuesta = None
     mostrar_catalogo = False
+    engine = None
     if conv.estado == Conversacion.ESTADO_HUMANO:
         respuesta = "Este chat está en manos de un humano. El bot no responde."
     else:
@@ -217,6 +219,7 @@ def simulador(request):
         'chat_id': conv.chat_id,
         'respuesta': respuesta,
         'mostrar_catalogo': mostrar_catalogo,
+        'categoria_catalogo': getattr(engine, 'catalogo_categoria', None),
         'modo': cfg.modo,
         'estado_conversacion': conv.estado,
         'gemini_activo': bool(getattr(settings, 'GEMINI_API_KEY', '')),
@@ -248,6 +251,7 @@ def consultar_gemini(request):
         conversacion=conv,
         cfg=cfg,
     )
+    engine = None
     if not respuesta_ia:
         engine = BotEngine(conv)
         respuesta_ia = engine.responder(texto)
@@ -262,6 +266,7 @@ def consultar_gemini(request):
         'chat_id': conv.chat_id,
         'respuesta': respuesta_ia,
         'mostrar_catalogo': mostrar_catalogo,
+        'categoria_catalogo': getattr(engine, 'catalogo_categoria', None),
         'modo': cfg.modo,
         'estado_conversacion': conv.estado,
         'gemini_activo': True,

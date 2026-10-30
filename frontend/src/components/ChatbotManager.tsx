@@ -9,13 +9,14 @@ interface MensajeSim {
   autor: 'cliente' | 'bot';
   texto: string;
   mostrarCatalogo?: boolean;
+  catalogo?: Stock[];
 }
 
 const SUGERENCIAS_RAPIDAS = [
-  'Quiero más información',
-  '¿Qué productos tienes disponibles y a qué precio?',
-  'Catálogo',
-  'Cancelar',
+  'Hola',
+  '¿Qué precio tiene la camisa oversize?',
+  '¿Qué tallas tienes?',
+  'Quiero ver el catálogo de camisas oversize',
 ];
 
 const formatearUrlImagen = (url: string | null | undefined): string | null => {
@@ -29,9 +30,6 @@ const formatearUrlImagen = (url: string | null | undefined): string | null => {
 export const ChatbotManager = () => {
   const [config, setConfig] = useState<ConfigBot | null>(null);
   const [chatId, setChatId] = useState<string>(() => `sim_${Date.now()}`);
-  const [stocksDisponibles, setStocksDisponibles] = useState<Stock[]>([]);
-  const [cargandoCatalogo, setCargandoCatalogo] = useState(false);
-  const [categoriaFiltro, setCategoriaFiltro] = useState<string>('Todas');
   const [imagenAmpliada, setImagenAmpliada] = useState<{ url: string; titulo: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -40,8 +38,7 @@ export const ChatbotManager = () => {
   const [mensajes, setMensajes] = useState<MensajeSim[]>([
     {
       autor: 'bot',
-      texto:
-        'Chat listo para probar. Escribe "quiero más información" (o haz clic en el botón rápido arriba) y presiona Enter.',
+      texto: 'Chat listo, veci. Escribe "Hola" para empezar.',
     },
   ]);
   const [enviando, setEnviando] = useState(false);
@@ -101,13 +98,14 @@ export const ChatbotManager = () => {
     setEnviando(true);
     try {
       const r = await chatbotService.simular(chatId, 'Cliente de prueba', texto);
-      if (r.mostrar_catalogo && stocksDisponibles.length === 0) {
-        setCargandoCatalogo(true);
-        chatbotService
-          .getCatalogo()
-          .then((stocks) => setStocksDisponibles(stocks.filter((s) => s.cantidad > 0)))
-          .catch(() => {})
-          .finally(() => setCargandoCatalogo(false));
+      let catalogo: Stock[] | undefined;
+      if (r.mostrar_catalogo) {
+        try {
+          const stocks = await chatbotService.getCatalogo(r.categoria_catalogo || undefined);
+          catalogo = stocks.filter((s) => s.cantidad > 0);
+        } catch {
+          catalogo = [];
+        }
       }
       setMensajes((m) => [
         ...m,
@@ -115,6 +113,7 @@ export const ChatbotManager = () => {
           autor: 'bot',
           texto: r.respuesta,
           mostrarCatalogo: Boolean(r.mostrar_catalogo),
+          catalogo,
         },
       ]);
     } catch (err: any) {
@@ -145,28 +144,11 @@ export const ChatbotManager = () => {
     setMensajes([
       {
         autor: 'bot',
-        texto:
-          'Chat nuevo iniciado. Escribe "Hola, quiero más información" y presiona Enter para conversar con el asesor IA y ver el catálogo de Oversizes.',
+        texto: 'Chat nuevo iniciado. Escribe "Hola" para empezar.',
       },
     ]);
     inputRef.current?.focus();
   };
-
-  const categoriasDisponibles = [
-    'Todas',
-    ...Array.from(
-      new Set(
-        stocksDisponibles.map((s) => s.producto_detail?.categoria?.nombre || 'General')
-      )
-    ),
-  ];
-
-  const stocksFiltrados =
-    categoriaFiltro === 'Todas'
-      ? stocksDisponibles
-      : stocksDisponibles.filter(
-          (s) => (s.producto_detail?.categoria?.nombre || 'General') === categoriaFiltro
-        );
 
   return (
     <div className="space-y-4">
@@ -291,87 +273,36 @@ export const ChatbotManager = () => {
                 <div className="text-[10px] font-semibold uppercase tracking-wider opacity-70 mb-1">
                   {m.autor === 'cliente' ? 'Tú (Cliente)' : 'Robot Tienda'}
                 </div>
-                <div>{m.texto}</div>
+                {m.texto && <div>{m.texto}</div>}
 
-                {/* Catálogo visual compartido por el robot en el Paso 1 */}
+                {/* Fotografías del catálogo solicitado (sin nombres, precios ni textos adicionales) */}
                 {m.mostrarCatalogo && (
-                  <div className="mt-3 pt-3 border-t border-slate-700/80 space-y-3">
-                    <div className="flex flex-wrap items-center gap-1.5">
-                      {categoriasDisponibles.map((cat) => (
-                        <button
-                          key={cat}
-                          type="button"
-                          onClick={() => setCategoriaFiltro(cat)}
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-medium transition cursor-pointer ${
-                            categoriaFiltro === cat
-                              ? 'bg-indigo-600 text-white'
-                              : 'bg-slate-900 text-slate-300 hover:bg-slate-700'
-                          }`}
-                        >
-                          {cat}
-                        </button>
-                      ))}
+                  <div className={m.texto ? 'mt-3 pt-3 border-t border-slate-700/80' : 'mt-1'}>
+                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 max-h-80 overflow-y-auto pr-1">
+                      {(m.catalogo || []).map((s) => {
+                        const prod = s.producto_detail;
+                        const imgUrl = formatearUrlImagen(prod?.imagen);
+                        return (
+                          <div
+                            key={s.id}
+                            onClick={() =>
+                              imgUrl && setImagenAmpliada({ url: imgUrl, titulo: '' })
+                            }
+                            className="h-32 w-full bg-slate-950 border border-slate-700/80 rounded-xl overflow-hidden flex items-center justify-center cursor-pointer hover:border-indigo-500/60 transition"
+                          >
+                            {imgUrl ? (
+                              <img
+                                src={imgUrl}
+                                alt=""
+                                className="w-full h-full object-contain hover:scale-105 transition"
+                              />
+                            ) : (
+                              <ImageIcon className="text-slate-600" size={24} />
+                            )}
+                          </div>
+                        );
+                      })}
                     </div>
-
-                    {cargandoCatalogo ? (
-                      <p className="text-xs text-indigo-300 animate-pulse">Cargando catálogo de estilos disponibles...</p>
-                    ) : stocksFiltrados.length === 0 ? (
-                      <p className="text-xs text-slate-400">No hay estilos con stock disponible.</p>
-                    ) : (
-                      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 max-h-72 overflow-y-auto pr-1">
-                        {stocksFiltrados.map((s) => {
-                          const prod = s.producto_detail;
-                          const nombreProd = prod?.nombre || String(s.producto);
-                          const imgUrl = formatearUrlImagen(prod?.imagen);
-                          const precio = Number(s.precio_comercial || prod?.precio_comercial || prod?.precio || 0);
-                          return (
-                            <div
-                              key={s.id}
-                              className="bg-slate-900/90 border border-slate-700/80 rounded-xl p-2 flex flex-col justify-between gap-2 hover:border-indigo-500/60 transition"
-                            >
-                              <div>
-                                <div
-                                  onClick={() =>
-                                    imgUrl && setImagenAmpliada({ url: imgUrl, titulo: `${nombreProd} (${s.talla || 'Única'})` })
-                                  }
-                                  className="h-28 w-full bg-slate-950 rounded-lg overflow-hidden flex items-center justify-center cursor-pointer"
-                                >
-                                  {imgUrl ? (
-                                    <img
-                                      src={imgUrl}
-                                      alt={nombreProd}
-                                      className="w-full h-full object-contain hover:scale-105 transition"
-                                    />
-                                  ) : (
-                                    <ImageIcon className="text-slate-600" size={24} />
-                                  )}
-                                </div>
-                                <p className="mt-1.5 text-xs font-semibold text-slate-100 line-clamp-1" title={nombreProd}>
-                                  {nombreProd}
-                                </p>
-                                <div className="flex items-center justify-between text-[11px] text-slate-400 mt-0.5 gap-1">
-                                  <span className="truncate" title={s.talla || 'Única'}>
-                                    Tallas: <strong className="text-indigo-300">{s.talla || 'Única'}</strong>
-                                  </span>
-                                  <span className="shrink-0">Disp: {s.cantidad}</span>
-                                </div>
-                                <p className="text-xs font-bold text-emerald-400 mt-0.5">
-                                  ${precio.toLocaleString('es-CO')}
-                                </p>
-                              </div>
-
-                              <button
-                                type="button"
-                                onClick={() => enviarTexto(nombreProd)}
-                                className="w-full bg-indigo-600/20 hover:bg-indigo-600 text-indigo-200 hover:text-white border border-indigo-500/30 rounded-lg py-1 text-[11px] font-medium transition cursor-pointer"
-                              >
-                                Me interesa este
-                              </button>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
@@ -395,7 +326,7 @@ export const ChatbotManager = () => {
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder="Escribe aquí tu mensaje (ej: quiero más información) y presiona Enter..."
+            placeholder="Escribe aquí tu mensaje (ej: Hola) y presiona Enter..."
             className="flex-1 bg-slate-800 border-2 border-indigo-500/50 focus:border-indigo-400 rounded-xl px-4 py-3 text-sm text-white placeholder:text-slate-400 focus:outline-none transition"
           />
           <button

@@ -1,6 +1,22 @@
 from django.db import models
 
 
+# Parrilla oficial de venta del chatbot (precios con envío incluido).
+# Se guarda en ConfigBot.precios_paquetes para poder ajustarla sin tocar código.
+PARRILA_PRECIOS_DEFAULT = {
+    'oversize_hombre': {
+        'etiqueta': 'Camisas Oversize Hombre',
+        'paquetes': {'1': 73000, '2': 120000},
+        'envio_incluido': True,
+    },
+    'camisas_mujer': {
+        'etiqueta': 'Camisas Para Mujer',
+        'paquetes': {'2': 70000, '3': 92000, '4': 112000},
+        'envio_incluido': True,
+    },
+}
+
+
 class ConfigBot(models.Model):
     activo = models.BooleanField(default=True, verbose_name="Robot activo")
     modo = models.CharField(
@@ -19,6 +35,11 @@ class ConfigBot(models.Model):
         default="",
         verbose_name="Reglas adicionales de negocio",
     )
+    precios_paquetes = models.JSONField(
+        default=dict,
+        blank=True,
+        verbose_name="Parrilla de precios por paquete (envío incluido)",
+    )
     hora_inicio = models.TimeField(null=True, blank=True, verbose_name="Inicio de atención")
     hora_fin = models.TimeField(null=True, blank=True, verbose_name="Fin de atención")
 
@@ -32,6 +53,9 @@ class ConfigBot(models.Model):
     @classmethod
     def obtener(cls):
         obj, _ = cls.objects.get_or_create(pk=1)
+        if not obj.precios_paquetes:
+            obj.precios_paquetes = PARRILA_PRECIOS_DEFAULT
+            obj.save(update_fields=['precios_paquetes'])
         return obj
 
 

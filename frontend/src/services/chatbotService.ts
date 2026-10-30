@@ -16,13 +16,17 @@ export interface SimuladorResponse {
   chat_id: string;
   respuesta: string;
   mostrar_catalogo?: boolean;
+  categoria_catalogo?: string | null;
   modo: 'autonomo' | 'revision';
   estado_conversacion: string;
   gemini_activo?: boolean;
 }
 
 export const chatbotService = {
-  getCatalogo: () => api.get<Stock[]>('/chatbot/catalogo/').then((r) => r.data),
+  getCatalogo: (categoria?: string | null) =>
+    api
+      .get<Stock[]>('/chatbot/catalogo/', { params: categoria ? { categoria } : undefined })
+      .then((r) => r.data),
   getConfig: () => api.get<ConfigBot>('/chatbot/config/').then((r) => r.data),
   updateConfig: (data: Partial<ConfigBot>) =>
     api.patch<ConfigBot>('/chatbot/config/', data).then((r) => r.data),
