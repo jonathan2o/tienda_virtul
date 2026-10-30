@@ -11,8 +11,6 @@ import {
   ChevronRight,
   PanelLeftClose,
   PanelLeftOpen,
-  ReceiptText,
-  TrendingUp,
   LogOut,
   User as UserIcon,
 } from 'lucide-react';
@@ -46,23 +44,13 @@ export const Layout = ({ children, activeTab, setActiveTab }: LayoutProps) => {
   const auth = getAuth();
   const esWorker = auth?.rol === 'worker';
 
-  // Menú según rol:
-  // - Trabajador: solo 'Ventas' y 'Resultados'
-  // - Administrador: todas las opciones con 'Ventas' debajo de todo
-  const menuItems = esWorker
-    ? [
-        { id: 'ventas', label: 'Ventas', icon: ReceiptText },
-        { id: 'resultados', label: 'Resultados', icon: TrendingUp },
-      ]
-    : [
-        { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
-        { id: 'stock', label: 'Control de Stock', icon: Boxes },
-        { id: 'productos', label: 'Productos', icon: Store },
-        { id: 'categorias', label: 'Categorías', icon: FolderTree },
-        { id: 'chatbot', label: 'Chatbot', icon: BotIcon },
-        { id: 'resultados', label: 'Resultados', icon: TrendingUp },
-        { id: 'ventas', label: 'Ventas', icon: ReceiptText },
-      ];
+  const menuItems = [
+    { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+    { id: 'stock', label: 'Control de Stock', icon: Boxes },
+    { id: 'productos', label: 'Productos', icon: Store },
+    { id: 'categorias', label: 'Categorías', icon: FolderTree },
+    { id: 'chatbot', label: 'Chatbot', icon: BotIcon },
+  ];
 
   const handleNavClick = (id: string) => {
     setActiveTab(id);

@@ -6,16 +6,12 @@ import { StockManager } from './components/StockManager';
 import { ProductosManager } from './components/ProductosManager';
 import { CategoriasManager } from './components/CategoriasManager';
 import { ChatbotManager } from './components/ChatbotManager';
-import { VentasManager } from './components/VentasManager';
-import { ResultadosView } from './components/ResultadosView';
 import { Login } from './components/Login';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { getAuth } from './services/authService';
 
 function AppShell() {
-  const auth = getAuth();
-  const esWorker = auth?.rol === 'worker';
-  const [activeTab, setActiveTab] = useState<string>(esWorker ? 'ventas' : 'dashboard');
+  const [activeTab, setActiveTab] = useState<string>('dashboard');
 
   return (
     <Layout activeTab={activeTab} setActiveTab={setActiveTab}>
@@ -24,8 +20,6 @@ function AppShell() {
       {activeTab === 'productos' && <ProductosManager />}
       {activeTab === 'categorias' && <CategoriasManager />}
       {activeTab === 'chatbot' && <ChatbotManager />}
-      {activeTab === 'ventas' && <VentasManager />}
-      {activeTab === 'resultados' && <ResultadosView />}
     </Layout>
   );
 }

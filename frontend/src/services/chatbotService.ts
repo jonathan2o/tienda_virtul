@@ -1,4 +1,5 @@
 import api from './api';
+import type { Stock } from '../types';
 
 export interface ConfigBot {
   id: number;
@@ -21,6 +22,7 @@ export interface SimuladorResponse {
 }
 
 export const chatbotService = {
+  getCatalogo: () => api.get<Stock[]>('/chatbot/catalogo/').then((r) => r.data),
   getConfig: () => api.get<ConfigBot>('/chatbot/config/').then((r) => r.data),
   updateConfig: (data: Partial<ConfigBot>) =>
     api.patch<ConfigBot>('/chatbot/config/', data).then((r) => r.data),

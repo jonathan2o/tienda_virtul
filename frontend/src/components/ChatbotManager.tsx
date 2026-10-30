@@ -3,7 +3,6 @@ import { Bot, Circle, Send, Power, RefreshCw, Trash2, Sparkles, Image as ImageIc
 
 import { chatbotService } from '../services/chatbotService';
 import type { ConfigBot } from '../services/chatbotService';
-import { stockService } from '../services/stockService';
 import type { Stock } from '../types';
 
 interface MensajeSim {
@@ -30,6 +29,7 @@ const formatearUrlImagen = (url: string | null | undefined): string | null => {
 export const ChatbotManager = () => {
   const [config, setConfig] = useState<ConfigBot | null>(null);
   const [stocksDisponibles, setStocksDisponibles] = useState<Stock[]>([]);
+  const [cargandoCatalogo, setCargandoCatalogo] = useState(false);
   const [categoriaFiltro, setCategoriaFiltro] = useState<string>('Todas');
   const [imagenAmpliada, setImagenAmpliada] = useState<{ url: string; titulo: string } | null>(null);
   const [loading, setLoading] = useState(false);
@@ -52,12 +52,8 @@ export const ChatbotManager = () => {
     setLoading(true);
     setError(null);
     try {
-      const [c, stocks] = await Promise.all([
-        chatbotService.getConfig(),
-        stockService.getStocks(),
-      ]);
+      const c = await chatbotService.getConfig();
       setConfig(c);
-      setStocksDisponibles(stocks.filter((s) => s.cantidad > 0));
     } catch (e: any) {
       setError(e?.response?.data?.detail || 'No se pudo cargar la configuración del chatbot.');
     } finally {
@@ -105,8 +101,12 @@ export const ChatbotManager = () => {
     try {
       const r = await chatbotService.simular('simulador', 'Cliente de prueba', texto);
       if (r.mostrar_catalogo && stocksDisponibles.length === 0) {
-        const stocks = await stockService.getStocks();
-        setStocksDisponibles(stocks.filter((s) => s.cantidad > 0));
+        setCargandoCatalogo(true);
+        chatbotService
+          .getCatalogo()
+          .then((stocks) => setStocksDisponibles(stocks.filter((s) => s.cantidad > 0)))
+          .catch(() => {})
+          .finally(() => setCargandoCatalogo(false));
       }
       setMensajes((m) => [
         ...m,
@@ -311,7 +311,9 @@ export const ChatbotManager = () => {
                       ))}
                     </div>
 
-                    {stocksFiltrados.length === 0 ? (
+                    {cargandoCatalogo ? (
+                      <p className="text-xs text-indigo-300 animate-pulse">Cargando catálogo de estilos disponibles...</p>
+                    ) : stocksFiltrados.length === 0 ? (
                       <p className="text-xs text-slate-400">No hay estilos con stock disponible.</p>
                     ) : (
                       <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2.5 max-h-72 overflow-y-auto pr-1">

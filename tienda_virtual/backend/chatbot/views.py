@@ -1,3 +1,7 @@
+import base64
+import io
+from PIL import Image
+
 from django.conf import settings
 from django.utils import timezone
 
@@ -6,6 +10,7 @@ from rest_framework.decorators import api_view, permission_classes
 from rest_framework.permissions import IsAuthenticated
 from rest_framework.response import Response
 
+from stock.models import Stock
 from usuarios.permissions import IsAdminRole
 
 from .models import ConfigBot, Conversacion, Mensaje
@@ -20,9 +25,75 @@ from .engine import BotEngine
 from .gemini_service import generar_respuesta_gemini
 
 
+_THUMB_CACHE: dict[int, str | None] = {}
+
+
+def _obtener_miniatura_base64(prod_id: int, raw_img: str | None) -> str | None:
+    if prod_id in _THUMB_CACHE:
+        return _THUMB_CACHE[prod_id]
+    if not raw_img:
+        _THUMB_CACHE[prod_id] = None
+        return None
+    try:
+        b64_data = raw_img.split(',', 1)[1] if ',' in raw_img else raw_img
+        img_bytes = base64.b64decode(b64_data)
+        with Image.open(io.BytesIO(img_bytes)) as im:
+            im = im.convert('RGB')
+            im.thumbnail((240, 240))
+            buf = io.BytesIO()
+            im.save(buf, format='JPEG', quality=72, optimize=True)
+            thumb = f"data:image/jpeg;base64,{base64.b64encode(buf.getvalue()).decode('ascii')}"
+            _THUMB_CACHE[prod_id] = thumb
+            return thumb
+    except Exception:
+        return raw_img
+
+
+# ---------- Catálogo Ligero para el Chatbot ----------
+@api_view(['GET'])
+@permission_classes([IsAuthenticated])
+def catalogo_bot(request):
+    stocks = (
+        Stock.objects.select_related('producto', 'producto__categoria')
+        .defer('producto__imagen_guia_tallas')
+        .filter(cantidad__gt=0)
+        .order_by('producto__nombre', 'talla')
+    )
+    items = []
+    for s in stocks:
+        p = s.producto
+        cat = p.categoria
+        items.append({
+            'id': s.id,
+            'producto': p.nombre,
+            'producto_id': p.id,
+            'talla': s.talla or p.talla or 'Única',
+            'precio_recibido': str(s.precio_recibido or p.precio_recibido or 0),
+            'precio_comercial': str(s.precio_comercial or p.precio_comercial or p.precio or 0),
+            'porcentaje_margen': str(s.porcentaje_margen or 75),
+            'cantidad': s.cantidad,
+            'producto_detail': {
+                'id': p.id,
+                'nombre': p.nombre,
+                'descripcion': p.descripcion or '',
+                'talla': p.talla or '',
+                'categoria': {'id': cat.id, 'nombre': cat.nombre, 'descripcion': cat.descripcion} if cat else None,
+                'imagen': _obtener_miniatura_base64(p.id, p.imagen),
+                'imagen_guia_tallas': None,
+                'precio_recibido': str(p.precio_recibido or 0),
+                'precio_comercial': str(p.precio_comercial or p.precio or 0),
+                'precio': str(p.precio or p.precio_comercial or 0),
+                'posicion': p.posicion or '',
+                'fila': str(p.fila) if p.fila is not None else '',
+                'activo': p.activo,
+            },
+        })
+    return Response(items)
+
+
 # ---------- Config ----------
 @api_view(['GET', 'PUT', 'PATCH'])
-@permission_classes([IsAuthenticated, IsAdminRole])
+@permission_classes([IsAuthenticated])
 def config_bot(request):
     cfg = ConfigBot.obtener()
     if request.method == 'GET':
@@ -37,7 +108,7 @@ def config_bot(request):
 
 # ---------- Estado ----------
 @api_view(['GET'])
-@permission_classes([IsAuthenticated, IsAdminRole])
+@permission_classes([IsAuthenticated])
 def estado_bot(request):
     cfg = ConfigBot.obtener()
     return Response({
@@ -51,7 +122,7 @@ def estado_bot(request):
 
 # ---------- Conversaciones ----------
 @api_view(['GET'])
-@permission_classes([IsAuthenticated, IsAdminRole])
+@permission_classes([IsAuthenticated])
 def conversaciones_lista(request):
     qs = Conversacion.objects.all()
     serializer = ConversacionSerializer(qs, many=True)
@@ -59,7 +130,7 @@ def conversaciones_lista(request):
 
 
 @api_view(['GET'])
-@permission_classes([IsAuthenticated, IsAdminRole])
+@permission_classes([IsAuthenticated])
 def conversacion_mensajes(request, pk):
     try:
         conv = Conversacion.objects.get(pk=pk)
@@ -70,7 +141,7 @@ def conversacion_mensajes(request, pk):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated, IsAdminRole])
+@permission_classes([IsAuthenticated])
 def tomar_chat(request, pk):
     try:
         conv = Conversacion.objects.get(pk=pk)
@@ -82,7 +153,7 @@ def tomar_chat(request, pk):
 
 
 @api_view(['POST'])
-@permission_classes([IsAuthenticated, IsAdminRole])
+@permission_classes([IsAuthenticated])
 def responder_manual(request, pk):
     try:
         conv = Conversacion.objects.get(pk=pk)
@@ -100,7 +171,7 @@ def responder_manual(request, pk):
 
 # ---------- Simulador ----------
 @api_view(['POST'])
-@permission_classes([IsAuthenticated, IsAdminRole])
+@permission_classes([IsAuthenticated])
 def simulador(request):
     serializer = SimuladorInputSerializer(data=request.data)
     if not serializer.is_valid():
@@ -150,7 +221,7 @@ def simulador(request):
 
 # ---------- Servicio Directo Gemini ----------
 @api_view(['POST'])
-@permission_classes([IsAuthenticated, IsAdminRole])
+@permission_classes([IsAuthenticated])
 def consultar_gemini(request):
     serializer = SimuladorInputSerializer(data=request.data)
     if not serializer.is_valid():

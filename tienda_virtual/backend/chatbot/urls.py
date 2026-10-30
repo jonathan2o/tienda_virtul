@@ -1,6 +1,7 @@
 from django.urls import path
 
 from .views import (
+    catalogo_bot,
     config_bot,
     estado_bot,
     conversaciones_lista,
@@ -12,6 +13,7 @@ from .views import (
 )
 
 urlpatterns = [
+    path('chatbot/catalogo/', catalogo_bot, name='chatbot-catalogo'),
     path('chatbot/config/', config_bot, name='chatbot-config'),
     path('chatbot/estado/', estado_bot, name='chatbot-estado'),
     path('chatbot/conversaciones/', conversaciones_lista, name='chatbot-conversaciones'),

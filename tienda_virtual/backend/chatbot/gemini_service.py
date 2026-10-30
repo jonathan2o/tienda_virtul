@@ -38,6 +38,7 @@ def construir_resumen_inventario() -> str:
     """Construye un listado claro del stock disponible en tiempo real para el prompt de Gemini."""
     stocks = (
         Stock.objects.select_related('producto', 'producto__categoria')
+        .defer('producto__imagen', 'producto__imagen_guia_tallas')
         .filter(cantidad__gt=0)
         .order_by('producto__nombre', 'talla')
     )

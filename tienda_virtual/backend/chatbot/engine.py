@@ -72,7 +72,12 @@ class BotEngine:
         return f"{saludo} Mire, por aquí le comparto el catálogo con los estilos disponibles para que lo mire con calma."
 
     def _stocks_disponibles(self):
-        return Stock.objects.select_related('producto', 'producto__categoria').filter(cantidad__gt=0).order_by('producto__nombre', 'talla')
+        return (
+            Stock.objects.select_related('producto', 'producto__categoria')
+            .defer('producto__imagen', 'producto__imagen_guia_tallas')
+            .filter(cantidad__gt=0)
+            .order_by('producto__nombre', 'talla')
+        )
 
     def _buscar_stocks(self, texto):
         q = texto.strip().lower()
@@ -182,7 +187,7 @@ class BotEngine:
             opciones = ctx.get('opciones', [])
             if idx is not None and 1 <= idx <= len(opciones):
                 stock_id = opciones[idx - 1]
-                s = Stock.objects.select_related('producto').get(id=stock_id)
+                s = Stock.objects.select_related('producto').defer('producto__imagen', 'producto__imagen_guia_tallas').get(id=stock_id)
                 ctx = {'iniciado': True, 'phase': 'cantidad', 'stock_id': s.id}
                 self._save_ctx(ctx)
                 precio = s.precio_comercial or s.producto.precio_comercial or s.producto.precio or 0
@@ -195,7 +200,7 @@ class BotEngine:
             cant = self._parse_int(texto)
             if cant is None or cant <= 0:
                 return "Dime una cantidad válida (número mayor a 0)."
-            s = Stock.objects.select_related('producto').get(id=ctx['stock_id'])
+            s = Stock.objects.select_related('producto').defer('producto__imagen', 'producto__imagen_guia_tallas').get(id=ctx['stock_id'])
             if cant > s.cantidad:
                 return f"Solo hay {s.cantidad} unidades disponibles. ¿Cuántas quieres?"
             ctx['cantidad'] = cant
@@ -237,7 +242,7 @@ class BotEngine:
                 ctx['ciudad'] = ''
             ctx['phase'] = 'confirma'
             self._save_ctx(ctx)
-            s = Stock.objects.select_related('producto').get(id=ctx['stock_id'])
+            s = Stock.objects.select_related('producto').defer('producto__imagen', 'producto__imagen_guia_tallas').get(id=ctx['stock_id'])
             precio = s.precio_comercial or s.producto.precio_comercial or s.producto.precio or 0
             total = (Decimal(str(precio)) * Decimal(str(ctx['cantidad']))).quantize(Decimal('0.01'))
             resumen = (f"Resumen de tu pedido:\n"
