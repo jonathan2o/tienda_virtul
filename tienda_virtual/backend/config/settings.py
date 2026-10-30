@@ -27,7 +27,7 @@ SECRET_KEY = 'django-insecure-e79^4-+j51qg313$((q)7l#t4$4v(2lot#qf68h)dw(d#5&mt5
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = []
+ALLOWED_HOSTS = ["tiendajr.tech", "www.tiendajr.tech", "179.236.243.216", "localhost", "127.0.0.1"]
 
 
 # Application definition
@@ -107,7 +107,7 @@ else:
             'USER': 'jonathan_rodriguez',
             'PASSWORD': '3132959177',
             'HOST': 'localhost',
-            'PORT': '5432',
+            'PORT': str(env_config('DB_PORT', default=os.getenv('DB_PORT', '5433'))),
         }
     }
 
@@ -166,6 +166,8 @@ CORS_ALLOWED_ORIGINS = [
     "http://127.0.0.1:5173",
     "http://localhost:3000",
     "http://127.0.0.1:3000",
+    "https://tiendajr.tech",
+    "http://tiendajr.tech",
 ]
 
 CORS_ALLOW_CREDENTIALS = True
@@ -184,3 +186,17 @@ SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(hours=8),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=7),
 }
+
+try:
+    import daphne  # noqa: F401
+    import channels  # noqa: F401
+    INSTALLED_APPS.insert(INSTALLED_APPS.index('django.contrib.staticfiles'), 'daphne')
+    INSTALLED_APPS.append('channels')
+    ASGI_APPLICATION = 'config.asgi.application'
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        },
+    }
+except ImportError:
+    pass
