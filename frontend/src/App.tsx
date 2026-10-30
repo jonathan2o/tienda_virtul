@@ -6,6 +6,7 @@ import { StockManager } from './components/StockManager';
 import { ProductosManager } from './components/ProductosManager';
 import { CategoriasManager } from './components/CategoriasManager';
 import { ChatbotManager } from './components/ChatbotManager';
+import { CatalogoManager } from './components/CatalogoManager';
 import { Login } from './components/Login';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { getAuth } from './services/authService';
@@ -20,6 +21,7 @@ function AppShell() {
       {activeTab === 'productos' && <ProductosManager />}
       {activeTab === 'categorias' && <CategoriasManager />}
       {activeTab === 'chatbot' && <ChatbotManager />}
+      {activeTab === 'catalogo' && <CatalogoManager />}
     </Layout>
   );
 }

@@ -4,6 +4,7 @@ import {
   Boxes,
   FolderTree,
   Bot as BotIcon,
+  BookOpen,
   Menu,
   X,
   Store,
@@ -50,6 +51,7 @@ export const Layout = ({ children, activeTab, setActiveTab }: LayoutProps) => {
     { id: 'productos', label: 'Productos', icon: Store },
     { id: 'categorias', label: 'Categorías', icon: FolderTree },
     { id: 'chatbot', label: 'Chatbot', icon: BotIcon },
+    { id: 'catalogo', label: 'Catálogo', icon: BookOpen },
   ];
 
   const handleNavClick = (id: string) => {
