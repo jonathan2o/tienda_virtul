@@ -33,6 +33,7 @@ export const ChatbotManager = () => {
   const [imagenAmpliada, setImagenAmpliada] = useState<{ url: string; titulo: string } | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [geminiActivo, setGeminiActivo] = useState<boolean | null>(null);
 
   const [input, setInput] = useState('');
   const [mensajes, setMensajes] = useState<MensajeSim[]>([
@@ -98,6 +99,7 @@ export const ChatbotManager = () => {
     setEnviando(true);
     try {
       const r = await chatbotService.simular(chatId, 'Cliente de prueba', texto);
+      if (typeof r.gemini_activo === 'boolean') setGeminiActivo(r.gemini_activo);
       let catalogo: Stock[] | undefined;
       if (r.mostrar_catalogo) {
         try {
@@ -157,9 +159,15 @@ export const ChatbotManager = () => {
         <div>
           <h2 className="text-lg sm:text-xl font-bold text-slate-100 flex flex-wrap items-center gap-2">
             <Bot className="text-indigo-400" size={24} /> Chatbot — Chat de prueba
-            <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
-              <Sparkles size={12} /> Gemini AI Conectado
-            </span>
+            {geminiActivo === false ? (
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-500/30">
+                <Circle size={10} className="fill-amber-400 text-amber-400" /> Gemini con demora · modo básico
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1 text-[11px] font-semibold px-2.5 py-0.5 rounded-full bg-indigo-500/20 text-indigo-300 border border-indigo-500/30">
+                <Sparkles size={12} /> Gemini AI Conectado
+              </span>
+            )}
           </h2>
           <p className="text-xs sm:text-sm text-slate-400">
             Chatea aquí con el robot impulsado por Google Gemini para consultar stock real y probar el flujo paso a paso

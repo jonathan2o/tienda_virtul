@@ -10,6 +10,7 @@ from stock.services import StockService
 
 from .models import ConfigBot, Conversacion, PARRILA_PRECIOS_DEFAULT
 from .gemini_service import (
+    ORDEN_TALLAS,
     agrupar_stocks_por_diseno,
     categoria_key,
     detectar_contexto_producto,
@@ -27,6 +28,14 @@ def _norm(texto: str) -> str:
 
 def _sin_acentos(texto: str) -> str:
     return ''.join(c for c in unicodedata.normalize('NFD', texto) if unicodedata.category(c) != 'Mn')
+
+
+# Cantidades escritas con palabras (el cliente escribe "solo quiero una", no "1").
+NUMEROS_PALABRA = {
+    'una': 1, 'uno': 1, 'un': 1,
+    'dos': 2, 'tres': 3, 'cuatro': 4, 'cinco': 5,
+    'seis': 6, 'siete': 7, 'ocho': 8, 'nueve': 9, 'diez': 10,
+}
 
 
 class BotEngine:
@@ -138,6 +147,110 @@ class BotEngine:
             return m.group(1)
         return None
 
+    def _parse_cantidad(self, texto):
+        """Entiende cantidades en dígitos o en palabras: 'solo quiero una' -> 1."""
+        cant = self._parse_int(texto or '')
+        if cant is not None:
+            return cant
+        plano = _sin_acentos(_norm(texto))
+        for palabra, valor in NUMEROS_PALABRA.items():
+            if re.search(rf'(?<![a-z]){palabra}(?![a-z])', plano):
+                return valor
+        return None
+
+    @staticmethod
+    def _contiene_frase(plano: str, frases) -> bool:
+        for frase in frases:
+            if re.search(rf'(?<![a-z0-9]){re.escape(frase)}(?![a-z0-9])', plano):
+                return True
+        return False
+
+    def _es_consulta_precio(self, texto: str) -> bool:
+        plano = _sin_acentos(_norm(texto))
+        claves = (
+            'precio', 'precios', 'cuanto', 'cuanta', 'vale', 'valen', 'cuesta',
+            'cuestan', 'costo', 'cuanto sale', 'cuanto queda', 'tarifa',
+        )
+        return self._contiene_frase(plano, claves)
+
+    def _es_consulta_tallas(self, texto: str) -> bool:
+        plano = _sin_acentos(_norm(texto))
+        claves = ('talla', 'tallas', 'medida', 'medidas', 'size')
+        return self._contiene_frase(plano, claves)
+
+    def _tallas_contexto(self, ctx: dict) -> list:
+        grupo = self._grupo_por_diseno(ctx.get('diseno_actual'))
+        if grupo:
+            return grupo.get('tallas_lista') or []
+        stock = self._stock_actual(ctx)
+        if stock:
+            talla = stock.talla or stock.producto.talla
+            if talla:
+                return [talla]
+        tallas = set()
+        for g in self._grupos():
+            tallas.update(g.get('tallas_lista') or [])
+        return sorted(tallas, key=lambda t: (ORDEN_TALLAS.get(t.upper(), 99), t))
+
+    def _precio_contexto(self, ctx: dict):
+        parrilla = formatear_parrilla(ctx.get('categoria_actual'), self.cfg)
+        if parrilla:
+            return parrilla
+        grupo = self._grupo_por_diseno(ctx.get('diseno_actual'))
+        if grupo:
+            return f"{fmt_cop(grupo['precio'])} por unidad"
+        stock = self._stock_actual(ctx)
+        if stock:
+            return f"{fmt_cop(self._precio_unidad(stock))} por unidad"
+        grupos = self._grupos()
+        if grupos:
+            return f"{fmt_cop(grupos[0]['precio'])} por unidad"
+        return None
+
+    def _pregunta_pendiente(self, ctx: dict):
+        phase = ctx.get('phase')
+        if phase == 'talla':
+            grupo = self._grupo_por_diseno(ctx.get('diseno_actual'))
+            return self._pedir_talla(grupo) if grupo else "¿Qué talla te queda, veci?"
+        if phase == 'cantidad':
+            return "¿Cuántas te llevas, veci?"
+        if phase == 'datos':
+            return "Envíame tus datos en un mensaje: nombre, dirección, barrio, ciudad."
+        if phase == 'confirma':
+            return "¿Confirmas el pedido, veci?"
+        return "¿Te muestro el catálogo para que elijas el diseño?"
+
+    def _respuesta_datos(self, texto: str, ctx: dict, con_pregunta: bool = True, ya_saludado: bool = True):
+        """
+        Respuesta determinística con datos reales de PostgreSQL (precio y tallas),
+        sin depender de Gemini. Devuelve None si el mensaje no es de precio/tallas.
+        """
+        pide_precio = self._es_consulta_precio(texto)
+        pide_tallas = self._es_consulta_tallas(texto)
+        if not (pide_precio or pide_tallas):
+            return None
+
+        partes = []
+        if pide_precio:
+            precio = self._precio_contexto(ctx)
+            if precio:
+                partes.append(f"Precio, veci: {precio}.")
+        if pide_tallas:
+            tallas = self._tallas_contexto(ctx)
+            if tallas:
+                partes.append(f"Tallas disponibles: {', '.join(tallas)}.")
+        if not partes:
+            return None
+
+        respuesta = ' '.join(partes)
+        if con_pregunta:
+            pregunta = self._pregunta_pendiente(ctx)
+            if pregunta:
+                respuesta = f"{respuesta} {pregunta}"
+        if not ya_saludado:
+            respuesta = f"{self._saludo_por_hora()} {respuesta}"
+        return respuesta
+
     def _es_solicitud_catalogo(self, low: str) -> bool:
         plano = _sin_acentos(low)
         frases_catalogo = (
@@ -181,6 +294,11 @@ class BotEngine:
         return any(k in low for k in claves)
 
     def _respuesta_auxiliar(self, texto: str, ctx: dict, pendiente: str) -> str:
+        # 1) Precio/tallas: se responden con datos reales, sin depender de Gemini.
+        deterministica = self._respuesta_datos(texto, ctx, con_pregunta=False)
+        if deterministica:
+            return f"{deterministica} {pendiente}"
+
         respuesta, _ = generar_respuesta_gemini(
             mensaje_usuario=texto,
             conversacion=self.conv,
@@ -306,7 +424,32 @@ class BotEngine:
             return respuesta_ia
         if not ctx.get('iniciado'):
             return self._mensaje_paso_1_catalogo()
-        return "No entendí, veci. ¿Me repites qué producto te interesa?"
+
+        # Sin Gemini disponible: se responde con datos reales (precio/tallas) o se
+        # retoma el paso pendiente. Nunca se repite el bucle de "No entendí".
+        deterministica = self._respuesta_datos(texto, ctx, con_pregunta=True, ya_saludado=True)
+        if deterministica:
+            return deterministica
+
+        pregunta = self._pregunta_pendiente(ctx)
+        if pregunta:
+            # Si ya repetimos la misma pregunta en el turno anterior, enviamos el
+            # catálogo (fotos) en vez de volver a preguntar lo mismo.
+            ultimos_bot = list(
+                self.conv.mensajes.filter(autor='bot').order_by('-fecha')[:3]
+            )
+            ultimo_texto = next(
+                ((m.texto or '').strip() for m in ultimos_bot if (m.texto or '').strip()),
+                '',
+            )
+            repetido = ultimo_texto == pregunta
+            if not (repetido and not ctx.get('phase')):
+                return pregunta
+
+        # Sin nada que aclarar: se envían las fotos del catálogo para que el cliente elija.
+        self.mostro_catalogo = True
+        self.catalogo_categoria = ctx.get('categoria_actual')
+        return ""
 
     # ---------- main ----------
     def responder(self, texto):
@@ -347,6 +490,16 @@ class BotEngine:
 
         # --- sin flujo activo ---
         if phase is None:
+            # Precio y tallas se responden con datos reales de PostgreSQL, sin depender de Gemini.
+            deterministica = self._respuesta_datos(
+                texto, ctx, con_pregunta=True, ya_saludado=ya_saludado
+            )
+            if deterministica:
+                ctx['iniciado'] = True
+                ctx['saludado'] = True
+                self._save_ctx(ctx)
+                return deterministica
+
             if self._es_consulta_conversacional(low):
                 return self._responder_gemini(texto, ctx, ya_saludado)
 
@@ -399,6 +552,8 @@ class BotEngine:
                         self._save_ctx(ctx)
                         return self._pregunta_cantidad(ctx, grupo)
                 return f"No tengo talla {talla}, veci. ¿Te sirve alguna de estas: {', '.join(tallas_validas)}?"
+            if self._parse_cantidad(texto) is not None:
+                return f"Primero dime la talla, veci: {', '.join(tallas_validas)}. ¿Cuál te queda?"
             if self._es_pregunta_auxiliar(low):
                 return self._respuesta_auxiliar(texto, ctx, self._pedir_talla(grupo))
             return self._pedir_talla(grupo)
@@ -409,7 +564,7 @@ class BotEngine:
             if not stock:
                 self._reset(keep_saludo=True)
                 return "Perdí el producto, veci. ¿Qué diseño te interesa?"
-            cant = self._parse_int(texto) if ('?' not in low and '¿' not in low) else None
+            cant = self._parse_cantidad(texto) if ('?' not in low and '¿' not in low) else None
             if cant is None or cant <= 0:
                 if self._es_pregunta_auxiliar(low):
                     return self._respuesta_auxiliar(texto, ctx, "¿Cuántas unidades te llevas, veci?")

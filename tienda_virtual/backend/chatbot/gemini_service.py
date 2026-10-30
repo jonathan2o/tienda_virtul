@@ -1,5 +1,6 @@
 import logging
 import re
+import time
 from typing import Tuple
 
 import httpx
@@ -14,6 +15,15 @@ from .models import ConfigBot, Conversacion, PARRILA_PRECIOS_DEFAULT
 logger = logging.getLogger(__name__)
 
 _HTTP_CLIENT: httpx.Client | None = None
+
+# Cortacircuitos: si Gemini falla en todos los modelos, no se le insiste
+# durante este tiempo (el bot responde con datos reales de Django).
+_GEMINI_DOWN_UNTIL = 0.0
+_GEMINI_DOWN_SECONDS = 120
+
+# Presupuesto máximo de espera por respuesta: si Gemini está lento/caído,
+# el bot responde con datos reales en lugar de dejar al cliente esperando.
+_GEMINI_TIME_BUDGET = 12.0
 
 ORDEN_TALLAS = {'S': 1, 'M': 2, 'L': 3, 'XL': 4, 'XXL': 5, '2XL': 5, 'XXXL': 6, '3XL': 6}
 
@@ -78,6 +88,23 @@ def _get_http_client() -> httpx.Client:
             timeout=20.0,
         )
     return _HTTP_CLIENT
+
+
+def gemini_disponible() -> bool:
+    """True si la API de Gemini está configurada y no está en pausa por caídas recientes."""
+    if not (getattr(settings, 'GEMINI_API_KEY', '') or ''):
+        return False
+    return time.monotonic() >= _GEMINI_DOWN_UNTIL
+
+
+def _marcar_gemini_caido() -> None:
+    global _GEMINI_DOWN_UNTIL
+    _GEMINI_DOWN_UNTIL = time.monotonic() + _GEMINI_DOWN_SECONDS
+
+
+def _marcar_gemini_ok() -> None:
+    global _GEMINI_DOWN_UNTIL
+    _GEMINI_DOWN_UNTIL = 0.0
 
 
 def extraer_nombre_base_y_talla(nombre: str, talla_actual: str | None = None) -> Tuple[str, str]:
@@ -317,6 +344,10 @@ def generar_respuesta_gemini(
     if not api_key:
         return None, False
 
+    if not gemini_disponible():
+        logger.info("Gemini en pausa por caídas recientes; se responde con datos reales de Django.")
+        return None, False
+
     if cfg is None:
         cfg = ConfigBot.obtener()
 
@@ -325,7 +356,12 @@ def generar_respuesta_gemini(
 
     modelo_preferido = getattr(settings, 'GEMINI_MODEL', 'gemini-3.1-flash-lite') or 'gemini-3.1-flash-lite'
     modelos_a_probar = [modelo_preferido]
-    for fallback_model in ('gemini-3.1-flash-lite', 'gemini-3.8-flash'):
+    for fallback_model in (
+        'gemini-3.1-flash-lite',
+        'gemini-3.5-flash-lite',
+        'gemini-3.8-flash',
+        'gemini-2.5-flash',
+    ):
         if fallback_model not in modelos_a_probar:
             modelos_a_probar.append(fallback_model)
 
@@ -368,37 +404,57 @@ def generar_respuesta_gemini(
     )
 
     ultimo_error = None
+    inicio_intentos = time.monotonic()
+    agotado = False
     for model_name in modelos_a_probar:
-        try:
-            response = client.models.generate_content(
-                model=model_name,
-                contents=contents,
-                config=config,
-            )
-            texto = (response.text or '').strip()
-            if not texto:
-                continue
+        for intento in range(2):
+            if time.monotonic() - inicio_intentos > _GEMINI_TIME_BUDGET:
+                agotado = True
+                break
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=contents,
+                    config=config,
+                )
+                texto = (response.text or '').strip()
+                if not texto:
+                    break
 
-            mostrar_catalogo = False
-            if '[MOSTRAR_CATALOGO]' in texto:
-                mostrar_catalogo = True
-                texto = texto.replace('[MOSTRAR_CATALOGO]', '').strip()
+                mostrar_catalogo = False
+                if '[MOSTRAR_CATALOGO]' in texto:
+                    mostrar_catalogo = True
+                    texto = texto.replace('[MOSTRAR_CATALOGO]', '').strip()
 
-            # Seguridad adicional: si ya había saludado y el modelo incluyó un saludo al inicio, limpiarlo
-            if ya_saludado:
-                texto = re.sub(
-                    r'^(¡?hola[!,\\.\s]*|¡?muy\s+buenos\s+d[ií]as[!,\\.\s]*|¡?muy\s+buenas\s+tardes[!,\\.\s]*|¡?muy\s+buenas\s+noches[!,\\.\s]*|¡?buenos\s+d[ií]as[!,\\.\s]*|¡?buenas\s+tardes[!,\\.\s]*|¡?buenas\s+noches[!,\\.\s]*|¡?buenas[!,\\.\s]*)+',
-                    '',
-                    texto,
-                    flags=re.IGNORECASE,
-                ).strip()
-                if texto:
-                    texto = texto[0].upper() + texto[1:]
+                # Seguridad adicional: si ya había saludado y el modelo incluyó un saludo al inicio, limpiarlo
+                if ya_saludado:
+                    texto = re.sub(
+                        r'^(¡?hola[!,\\.\s]*|¡?muy\s+buenos\s+d[ií]as[!,\\.\s]*|¡?muy\s+buenas\s+tardes[!,\\.\s]*|¡?muy\s+buenas\s+noches[!,\\.\s]*|¡?buenos\s+d[ií]as[!,\\.\s]*|¡?buenas\s+tardes[!,\\.\s]*|¡?buenas\s+noches[!,\\.\s]*|¡?buenas[!,\\.\s]*)+',
+                        '',
+                        texto,
+                        flags=re.IGNORECASE,
+                    ).strip()
+                    if texto:
+                        texto = texto[0].upper() + texto[1:]
 
-            return texto, mostrar_catalogo
-        except Exception as exc:
-            ultimo_error = exc
-            logger.warning("Error consultando Gemini con modelo %s: %s", model_name, exc)
+                _marcar_gemini_ok()
+                return texto, mostrar_catalogo
+            except Exception as exc:
+                ultimo_error = exc
+                logger.warning(
+                    "Error consultando Gemini con modelo %s (intento %s): %s",
+                    model_name, intento + 1, exc,
+                )
+                if intento == 0:
+                    time.sleep(0.7)
+        if agotado:
+            break
 
+    _marcar_gemini_caido()
+    if agotado:
+        logger.warning(
+            "Presupuesto de tiempo de Gemini agotado (%.1fs); se responde con datos locales.",
+            _GEMINI_TIME_BUDGET,
+        )
     logger.error("No fue posible obtener respuesta de Gemini: %s", ultimo_error)
     return None, False

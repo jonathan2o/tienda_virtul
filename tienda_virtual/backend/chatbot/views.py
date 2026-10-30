@@ -24,6 +24,7 @@ from .serializers import (
 from .engine import BotEngine
 from .gemini_service import (
     agrupar_stocks_por_diseno,
+    gemini_disponible,
     generar_respuesta_gemini,
     obtener_qs_oversize,
 )
@@ -222,7 +223,7 @@ def simulador(request):
         'categoria_catalogo': getattr(engine, 'catalogo_categoria', None),
         'modo': cfg.modo,
         'estado_conversacion': conv.estado,
-        'gemini_activo': bool(getattr(settings, 'GEMINI_API_KEY', '')),
+        'gemini_activo': gemini_disponible(),
     })
 
 
@@ -269,5 +270,5 @@ def consultar_gemini(request):
         'categoria_catalogo': getattr(engine, 'catalogo_categoria', None),
         'modo': cfg.modo,
         'estado_conversacion': conv.estado,
-        'gemini_activo': True,
+        'gemini_activo': gemini_disponible(),
     })

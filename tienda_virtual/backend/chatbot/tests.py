@@ -188,6 +188,76 @@ class ChatbotEngineTests(TestCase):
         self.assertTrue(engine.mostro_catalogo)
         self.assertIn('Oversize', engine.catalogo_categoria or '')
 
+    # ---------- resiliencia: sin Gemini el bot sigue respondiendo ----------
+    def test_precio_sin_gemini(self):
+        self._crear_oversize()
+        with patch(
+            'chatbot.engine.generar_respuesta_gemini',
+            side_effect=AssertionError('No debe llamarse a Gemini para precios'),
+        ):
+            engine = BotEngine(self.conv)
+            r = engine.responder('¿Qué precio tiene la camisa oversize?')
+        self.assertIn('$73.000', r)
+        self.assertIn('$120.000', r)
+        self.assertNotIn('No entendí', r)
+
+    def test_tallas_sin_gemini(self):
+        self._crear_oversize()
+        with patch(
+            'chatbot.engine.generar_respuesta_gemini',
+            side_effect=AssertionError('No debe llamarse a Gemini para tallas'),
+        ):
+            engine = BotEngine(self.conv)
+            r = engine.responder('¿Qué tallas tienes?')
+        self.assertIn('L', r)
+        self.assertIn('XL', r)
+        self.assertNotIn('No entendí', r)
+
+    def test_precio_sin_gemini_en_flujo(self):
+        self._crear_oversize()
+        with patch('chatbot.engine.generar_respuesta_gemini', return_value=(None, False)):
+            engine = BotEngine(self.conv)
+            engine.responder('Quiero la Angel')
+            engine.responder('XL')
+            engine.responder('2')
+            r = engine.responder('¿y cuánto cuesta?')
+        self.assertIn('$120.000', r)
+        self.assertIn('nombre, dirección, barrio, ciudad', r)
+        self.assertEqual(self.conv.contexto.get('phase'), 'datos')
+
+    def test_gemini_caido_no_repite_no_entendi(self):
+        with patch('chatbot.engine.generar_respuesta_gemini', return_value=(None, False)):
+            engine = BotEngine(self.conv)
+            engine.responder('Hola')
+            respuestas = [
+                engine.responder('solo quiero una'),
+                engine.responder('no solo una'),
+                engine.responder('quiero una cafe'),
+            ]
+        for r in respuestas:
+            self.assertNotIn('No entendí', r)
+            self.assertTrue(r.strip())
+
+    def test_cantidad_en_palabras(self):
+        engine = BotEngine(self.conv)
+        engine.responder('camiseta')
+        r = engine.responder('solo quiero una')
+        self.assertIn('datos', r.lower())
+        self.assertEqual(self.conv.contexto.get('cantidad'), 1)
+
+    def test_circuito_gemini(self):
+        from unittest.mock import patch as _patch
+        from chatbot import gemini_service as gs
+
+        with _patch.object(gs, '_GEMINI_DOWN_UNTIL', 0.0):
+            self.assertTrue(gs.gemini_disponible() or not gs.settings.GEMINI_API_KEY)
+            gs._marcar_gemini_caido()
+            if gs.settings.GEMINI_API_KEY:
+                self.assertFalse(gs.gemini_disponible())
+            gs._marcar_gemini_ok()
+            if gs.settings.GEMINI_API_KEY:
+                self.assertTrue(gs.gemini_disponible())
+
     # ---------- configuración ----------
     def test_bot_desactivado(self):
         cfg = ConfigBot.obtener()
