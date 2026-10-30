@@ -28,6 +28,7 @@ const formatearUrlImagen = (url: string | null | undefined): string | null => {
 
 export const ChatbotManager = () => {
   const [config, setConfig] = useState<ConfigBot | null>(null);
+  const [chatId, setChatId] = useState<string>(() => `sim_${Date.now()}`);
   const [stocksDisponibles, setStocksDisponibles] = useState<Stock[]>([]);
   const [cargandoCatalogo, setCargandoCatalogo] = useState(false);
   const [categoriaFiltro, setCategoriaFiltro] = useState<string>('Todas');
@@ -99,7 +100,7 @@ export const ChatbotManager = () => {
     setMensajes((m) => [...m, { autor: 'cliente', texto }]);
     setEnviando(true);
     try {
-      const r = await chatbotService.simular('simulador', 'Cliente de prueba', texto);
+      const r = await chatbotService.simular(chatId, 'Cliente de prueba', texto);
       if (r.mostrar_catalogo && stocksDisponibles.length === 0) {
         setCargandoCatalogo(true);
         chatbotService
@@ -140,11 +141,12 @@ export const ChatbotManager = () => {
   };
 
   const limpiarChat = () => {
+    setChatId(`sim_${Date.now()}`);
     setMensajes([
       {
         autor: 'bot',
         texto:
-          'Chat nuevo iniciado. Escribe "quiero más información" y presiona Enter para ver el saludo según la hora y el catálogo.',
+          'Chat nuevo iniciado. Escribe "Hola, quiero más información" y presiona Enter para conversar con el asesor IA y ver el catálogo de Oversizes.',
       },
     ]);
     inputRef.current?.focus();
@@ -347,9 +349,11 @@ export const ChatbotManager = () => {
                                 <p className="mt-1.5 text-xs font-semibold text-slate-100 line-clamp-1" title={nombreProd}>
                                   {nombreProd}
                                 </p>
-                                <div className="flex items-center justify-between text-[11px] text-slate-400 mt-0.5">
-                                  <span>Talla: <strong className="text-indigo-300">{s.talla || 'Única'}</strong></span>
-                                  <span>Disp: {s.cantidad}</span>
+                                <div className="flex items-center justify-between text-[11px] text-slate-400 mt-0.5 gap-1">
+                                  <span className="truncate" title={s.talla || 'Única'}>
+                                    Tallas: <strong className="text-indigo-300">{s.talla || 'Única'}</strong>
+                                  </span>
+                                  <span className="shrink-0">Disp: {s.cantidad}</span>
                                 </div>
                                 <p className="text-xs font-bold text-emerald-400 mt-0.5">
                                   ${precio.toLocaleString('es-CO')}

@@ -8,7 +8,11 @@ from stock.models import Stock
 from stock.services import StockService
 
 from .models import ConfigBot, Conversacion
-from .gemini_service import generar_respuesta_gemini
+from .gemini_service import (
+    extraer_nombre_base_y_talla,
+    generar_respuesta_gemini,
+    obtener_qs_oversize,
+)
 
 
 FRASES_PASO_1 = (
@@ -72,28 +76,29 @@ class BotEngine:
         return f"{saludo} Mire, por aquí le comparto el catálogo con los estilos disponibles para que lo mire con calma."
 
     def _stocks_disponibles(self):
-        return (
-            Stock.objects.select_related('producto', 'producto__categoria')
-            .defer('producto__imagen', 'producto__imagen_guia_tallas')
-            .filter(cantidad__gt=0)
-            .order_by('producto__nombre', 'talla')
-        )
+        return obtener_qs_oversize(incluir_imagen=False)
 
     def _buscar_stocks(self, texto):
-        q = texto.strip().lower()
-        if not q:
+        q = re.sub(r'\s+', ' ', texto.strip().lower())
+        if not q or len(q) < 2:
             return []
-        res = []
+        exactos_base = []
+        parciales = []
         for s in self._stocks_disponibles():
-            nombre = (s.producto.nombre or '').lower()
-            talla = (s.talla or '').lower()
-            if q in nombre or q in talla or nombre in q:
-                res.append(s)
-        return res
+            nombre_raw = s.producto.nombre or ''
+            base, talla_extraida = extraer_nombre_base_y_talla(nombre_raw, s.talla or s.producto.talla)
+            nombre_low = re.sub(r'\s+', ' ', nombre_raw.lower()).strip()
+            base_low = re.sub(r'\s+', ' ', base.lower()).strip()
+            if q == base_low or q == nombre_low:
+                exactos_base.append(s)
+            elif q in nombre_low or base_low in q:
+                parciales.append(s)
+        return exactos_base if exactos_base else parciales
 
     def _fmt_stock(self, s):
+        base, talla = extraer_nombre_base_y_talla(s.producto.nombre or '', s.talla or s.producto.talla)
         precio = s.precio_comercial or s.producto.precio_comercial or s.producto.precio or 0
-        return f"{s.producto.nombre} - Talla {s.talla or 'única'} | ${precio} | Stock: {s.cantidad}"
+        return f"{base} - Talla {talla} | ${precio:,.0f} COP | Disponibles: {s.cantidad}"
 
     def _parse_int(self, texto):
         m = re.search(r'\d+', texto)
@@ -115,11 +120,17 @@ class BotEngine:
     def _es_consulta_conversacional(self, low: str) -> bool:
         if '?' in low or '¿' in low:
             return True
+        if low in ('s', 'm', 'l', 'xl', 'xxl', 'xxxl', '2xl', '3xl'):
+            return True
+        if re.match(r'^(talla|en talla|soy talla|uso|uso talla|soy)\s+(s|m|l|xl|xxl|xxxl|2xl|3xl)\b', low):
+            return True
         palabras_consulta = (
             'cuanto', 'cuánto', 'precio', 'vale', 'cuesta', 'tienes', 'tienen',
-            'hay', 'disponible', 'recomienda', 'busco', 'quisiera saber',
+            'hay', 'disponible', 'recomienda', 'busco', 'quisiera', 'quiero',
             'hacen envio', 'hacen envío', 'envios', 'envíos', 'ubicacion',
-            'ubicación', 'horario', 'tallas', 'colores', 'que vendes', 'qué vendes',
+            'ubicación', 'horario', 'tallas', 'talla', 'colores', 'que vendes',
+            'qué vendes', 'cuales', 'cuáles', 'mostrar', 'muestrame', 'muéstrame',
+            'hola', 'buenas', 'info', 'estilo', 'diseño', 'diseno',
         )
         return any(p in low for p in palabras_consulta)
 
@@ -140,8 +151,19 @@ class BotEngine:
         ctx = self._ctx()
         phase = ctx.get('phase')
 
-        # Paso 1: Si el cliente pide información / saluda / pide catálogo
+        # Paso 1: Si el cliente pide información / saluda / pide catálogo -> responder con Gemini modo vendedor + mostrar catálogo
         if phase is None and self._es_solicitud_inicial(low):
+            respuesta_ia, _ = generar_respuesta_gemini(
+                mensaje_usuario=texto,
+                conversacion=self.conv,
+                cfg=self.cfg,
+                forzar_catalogo=True,
+            )
+            if respuesta_ia:
+                self.mostro_catalogo = True
+                ctx['iniciado'] = True
+                self._save_ctx(ctx)
+                return respuesta_ia
             return self._mensaje_paso_1_catalogo()
 
         # --- sin flujo activo: intentar identificar producto directo o responder con Gemini ---

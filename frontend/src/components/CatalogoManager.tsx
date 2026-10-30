@@ -200,11 +200,11 @@ export const CatalogoManager = () => {
                       {nombreProd}
                     </h3>
 
-                    <div className="flex items-center justify-between text-xs text-slate-400">
-                      <span>
-                        Talla: <strong className="text-indigo-300">{talla}</strong>
+                    <div className="flex items-center justify-between text-xs text-slate-400 gap-1">
+                      <span className="truncate" title={talla}>
+                        Tallas: <strong className="text-indigo-300">{talla}</strong>
                       </span>
-                      <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 font-medium text-[11px]">
+                      <span className="px-2 py-0.5 rounded-md bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 font-medium text-[11px] shrink-0">
                         {s.cantidad} disp.
                       </span>
                     </div>

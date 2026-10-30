@@ -22,7 +22,11 @@ from .serializers import (
     ResponderInputSerializer,
 )
 from .engine import BotEngine
-from .gemini_service import generar_respuesta_gemini
+from .gemini_service import (
+    agrupar_stocks_por_diseno,
+    generar_respuesta_gemini,
+    obtener_qs_oversize,
+)
 
 
 _THUMB_CACHE: dict[int, str | None] = {}
@@ -49,40 +53,40 @@ def _obtener_miniatura_base64(prod_id: int, raw_img: str | None) -> str | None:
         return raw_img
 
 
-# ---------- Catálogo Ligero para el Chatbot ----------
+# ---------- Catálogo Ligero para el Chatbot (Solo Oversizes, 1 por Diseño) ----------
 @api_view(['GET'])
 @permission_classes([IsAuthenticated])
 def catalogo_bot(request):
-    stocks = (
-        Stock.objects.select_related('producto', 'producto__categoria')
-        .defer('producto__imagen_guia_tallas')
-        .filter(cantidad__gt=0)
-        .order_by('producto__nombre', 'talla')
-    )
+    stocks = obtener_qs_oversize(incluir_imagen=True)
+    grupos = agrupar_stocks_por_diseno(stocks)
     items = []
-    for s in stocks:
+    for g in grupos:
+        s = g['stock_representativo']
         p = s.producto
         cat = p.categoria
+        nombre_diseno = g['nombre_base']
+        tallas_txt = g['tallas_texto'] or 'Única'
+        precio = g['precio']
         items.append({
             'id': s.id,
-            'producto': p.nombre,
+            'producto': nombre_diseno,
             'producto_id': p.id,
-            'talla': s.talla or p.talla or 'Única',
+            'talla': tallas_txt,
             'precio_recibido': str(s.precio_recibido or p.precio_recibido or 0),
-            'precio_comercial': str(s.precio_comercial or p.precio_comercial or p.precio or 0),
+            'precio_comercial': str(precio),
             'porcentaje_margen': str(s.porcentaje_margen or 75),
-            'cantidad': s.cantidad,
+            'cantidad': g['cantidad_total'],
             'producto_detail': {
                 'id': p.id,
-                'nombre': p.nombre,
+                'nombre': nombre_diseno,
                 'descripcion': p.descripcion or '',
-                'talla': p.talla or '',
+                'talla': tallas_txt,
                 'categoria': {'id': cat.id, 'nombre': cat.nombre, 'descripcion': cat.descripcion} if cat else None,
                 'imagen': _obtener_miniatura_base64(p.id, p.imagen),
                 'imagen_guia_tallas': None,
                 'precio_recibido': str(p.precio_recibido or 0),
-                'precio_comercial': str(p.precio_comercial or p.precio or 0),
-                'precio': str(p.precio or p.precio_comercial or 0),
+                'precio_comercial': str(precio),
+                'precio': str(precio),
                 'posicion': p.posicion or '',
                 'fila': str(p.fila) if p.fila is not None else '',
                 'activo': p.activo,
